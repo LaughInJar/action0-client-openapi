@@ -22,6 +22,13 @@ from action0.openapi import SecurityScheme
    :members:
 ```
 
+## Translation
+
+```{eval-rst}
+.. automodule:: action0.openapi.parse
+   :members:
+```
+
 ## Intermediate representation
 
 ```{eval-rst}
