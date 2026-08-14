@@ -281,6 +281,9 @@ class Api:
     :param models: the models and enums, in schema order
     :param operations: the operations, in path order
     :param security: the security schemes becoming client credentials
+    :param warnings: notes about constructs the translation flattened
+        or skipped (printed by the CLI, documented in the generated
+        code where possible)
     """
 
     title: str
@@ -289,3 +292,4 @@ class Api:
     models: tuple[Model | EnumModel, ...] = field(default=())
     operations: tuple[OperationIR, ...] = field(default=())
     security: tuple[SecurityScheme, ...] = field(default=())
+    warnings: tuple[str, ...] = field(default=())

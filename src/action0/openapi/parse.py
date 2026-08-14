@@ -1,0 +1,895 @@
+"""
+Translating an OpenAPI 3.x document into the intermediate representation.
+
+:py:func:`parse_api` walks a loaded schema document and produces the
+:py:class:`~action0.openapi.ir.Api` the emitter renders: the
+``components/schemas`` become models and enums (inline schemas are
+synthesized into named models on the way), the ``paths`` become
+operations with parameters, body and response type, and the referenced
+``securitySchemes`` become client credentials. Everything outside the
+supported subset raises :py:class:`~action0.openapi.errors.SchemaError`
+naming the offending schema location; lesser omissions (an unsupported
+security scheme, an ignored ``additionalProperties``) are collected as
+:py:attr:`~action0.openapi.ir.Api.warnings`.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
+
+from .errors import SchemaError
+from .ir import Api
+from .ir import ArrayType
+from .ir import Body
+from .ir import BodyKind
+from .ir import EnumModel
+from .ir import EnumType
+from .ir import Field
+from .ir import MapType
+from .ir import Model
+from .ir import ModelType
+from .ir import OperationIR
+from .ir import Param
+from .ir import ParamLocation
+from .ir import ResponseKind
+from .ir import Scalar
+from .ir import ScalarType
+from .ir import SecurityKind
+from .ir import SecurityScheme
+from .ir import TypeExpr
+from .names import RESERVED_OPERATION_FIELDS
+from .names import NameRegistry
+from .names import class_name
+from .names import constant_name
+from .names import field_name
+from .names import operation_class_name
+from .names import path_placeholders
+from .names import rewrite_path
+from .resolve import RefResolver
+from .types import scalar_type
+
+#: the pointer prefix of reusable schema components
+_SCHEMAS_PREFIX = "#/components/schemas/"
+
+#: the HTTP methods a path item may carry (the other keys are
+#: parameters, servers, summary, ...)
+_METHODS = ("get", "put", "post", "delete", "options", "head", "patch", "trace")
+
+#: class names generated modules import from elsewhere — pre-claimed so
+#: no model or operation class can shadow them
+_RESERVED_CLASS_NAMES = (
+    "Any",
+    "APIClient",
+    "BackendT_co",
+    "JsonOperation",
+    "Method",
+    "Operation",
+    "Request",
+    "Response",
+)
+
+#: __init__ parameters of the generated client — credential names must
+#: not collide with them
+_RESERVED_CREDENTIAL_NAMES = frozenset({"self", "backend", "base_url", "headers"})
+
+#: locations of a parameter and their IR counterpart ("cookie" is
+#: deliberately absent: unsupported)
+_PARAM_LOCATIONS = {
+    "path": ParamLocation.PATH,
+    "query": ParamLocation.QUERY,
+    "header": ParamLocation.HEADER,
+}
+
+
+def parse_api(document: Mapping[str, Any]) -> Api:
+    """
+    Translate a loaded OpenAPI 3.x document into an :py:class:`Api`.
+
+    :param document: the document, as returned by
+        :py:func:`~action0.openapi.loader.load_schema`
+    :return: the intermediate representation
+    :raises SchemaError: for constructs outside the supported subset
+    """
+    return _Parser(document).parse()
+
+
+def _is_null_schema(node: Any) -> bool:
+    """
+    Whether a subschema matches only ``null`` (the 3.1 idiom inside
+    ``oneOf``/``anyOf``).
+
+    :param node: the subschema
+    :return: whether it is exactly ``{"type": "null"}``
+    """
+    return isinstance(node, Mapping) and dict(node) == {"type": "null"}
+
+
+class _Parser:
+    """
+    One document's translation state.
+
+    :param document: the loaded schema document
+    """
+
+    def __init__(self, document: Mapping[str, Any]) -> None:
+        self._document = document
+        self._resolver = RefResolver(document)
+        # models and operations end up in one generated package whose
+        # modules import each other, so all class names share one scope
+        self._class_names = NameRegistry()
+        for reserved in _RESERVED_CLASS_NAMES:
+            self._class_names.claim(reserved)
+        # translated components by component name; None marks "being
+        # translated right now" and makes reference cycles that need no
+        # forward declaration (model -> model) work
+        self._components: dict[str, tuple[TypeExpr, bool] | None] = {}
+        self._models: list[Model | EnumModel] = []
+        self._operations: list[OperationIR] = []
+        self._warnings: list[str] = []
+
+    def parse(self) -> Api:
+        """
+        Run the translation.
+
+        :return: the intermediate representation
+        """
+        info = self._document.get("info") or {}
+        schemas = (self._document.get("components") or {}).get("schemas") or {}
+        for name in schemas:
+            self._component_type(name, where=f"components.schemas.{name}")
+        for path, path_item in (self._document.get("paths") or {}).items():
+            self._parse_path(path, path_item)
+        return Api(
+            title=str(info.get("title", "API")),
+            version=str(info.get("version", "0")),
+            base_url=self._base_url(),
+            models=tuple(self._models),
+            operations=tuple(self._operations),
+            security=self._parse_security(),
+            warnings=tuple(self._warnings),
+        )
+
+    def _base_url(self) -> str | None:
+        """
+        The default base URL: the first server, variables at their
+        defaults.
+
+        :return: the URL, or ``None`` when the document names no servers
+        """
+        servers = self._document.get("servers") or []
+        if not servers:
+            return None
+        url = str(servers[0].get("url", ""))
+        for name, variable in (servers[0].get("variables") or {}).items():
+            url = url.replace("{" + name + "}", str(variable.get("default", "")))
+        return url or None
+
+    # ------------------------------------------------------------------
+    # schemas
+    # ------------------------------------------------------------------
+
+    def _component_type(self, name: str, where: str) -> tuple[TypeExpr, bool]:
+        """
+        Translate the schema component ``name`` (once).
+
+        :param name: the component name under ``components/schemas``
+        :param where: the schema location, for error messages
+        :return: the component's type and whether it is nullable
+        """
+        if name in self._components:
+            translated = self._components[name]
+            if translated is None:
+                # a reference cycle that is not simply model -> model
+                # (e.g. an array component containing itself) has no
+                # class name to break it with
+                raise SchemaError(f"{where}: unsupported reference cycle through {name!r}")
+            return translated
+        node = self._resolver.lookup(_SCHEMAS_PREFIX + name)
+        if not isinstance(node, Mapping):
+            raise SchemaError(f"components.schemas.{name}: the schema must be an object")
+        component_where = f"components.schemas.{name}"
+        plain, nullable = self._split_nullable(node, where=component_where)
+        if self._is_model_schema(plain):
+            # model components register their class *before* their
+            # properties are walked, so self references (Pet -> Pet)
+            # resolve to the class instead of recursing forever
+            cls = self._class_names.claim(class_name(name))
+            self._components[name] = (ModelType(cls), nullable)
+            self._model_type(plain, name=cls, where=component_where)
+            return ModelType(cls), nullable
+        self._components[name] = None
+        result = self._schema_type(node, context=name, where=component_where)
+        self._components[name] = result
+        return result
+
+    @staticmethod
+    def _is_model_schema(plain: Mapping[str, Any]) -> bool:
+        """
+        Whether a (nullability-stripped) schema is a plain model object.
+
+        :param plain: the schema node
+        :return: whether it is an object schema with properties, without
+            composition keywords
+        """
+        if any(keyword in plain for keyword in ("$ref", "allOf", "oneOf", "anyOf", "enum")):
+            return False
+        type_name = plain.get("type")
+        return bool(plain.get("properties")) and (type_name == "object" or type_name is None)
+
+    def _schema_type(
+        self, node: Mapping[str, Any], *, context: str, where: str
+    ) -> tuple[TypeExpr, bool]:
+        """
+        Translate one schema node into a type.
+
+        :param node: the schema node
+        :param context: the name inline models/enums are derived from
+        :param where: the schema location, for error messages
+        :return: the type and whether it is nullable
+        """
+        if "$ref" in node:
+            ref = node["$ref"]
+            if isinstance(ref, str) and ref.startswith(_SCHEMAS_PREFIX):
+                name = RefResolver.ref_name(ref)
+                return self._component_type(name, where=where)
+            # other local pointers are legal, just anonymous: translate
+            # the target as an inline schema
+            target = self._resolver.deref(node)
+            return self._schema_type(target, context=context, where=where)
+
+        node, nullable = self._split_nullable(node, where=where)
+
+        if "allOf" in node:
+            parts = list(node["allOf"])
+            if len(parts) != 1:
+                raise SchemaError(
+                    f"{where}: allOf composition is not supported (found {len(parts)} subschemas)"
+                    " — flatten the schema"
+                )
+            inner, inner_nullable = self._schema_type(parts[0], context=context, where=where)
+            return inner, nullable or inner_nullable
+        for keyword in ("oneOf", "anyOf"):
+            if keyword in node:
+                parts = [part for part in node[keyword] if not _is_null_schema(part)]
+                if len(parts) != 1:
+                    raise SchemaError(
+                        f"{where}: {keyword} with {len(parts)} alternatives is not supported —"
+                        " union results are not part of the supported subset yet"
+                    )
+                # the common "X or null" idiom: unwrap the one subschema
+                inner, inner_nullable = self._schema_type(parts[0], context=context, where=where)
+                return inner, nullable or inner_nullable or len(parts) != len(node[keyword])
+
+        if "enum" in node:
+            return self._enum_type(node, context=context, where=where), nullable
+
+        type_name = node.get("type")
+        if type_name == "array":
+            items = node.get("items")
+            if isinstance(items, Mapping):
+                item_type, _ = self._schema_type(
+                    items, context=f"{context} item", where=f"{where}.items"
+                )
+            else:
+                item_type = ScalarType(Scalar.ANY)
+            return ArrayType(item_type), nullable
+        if type_name == "object" or (type_name is None and "properties" in node):
+            return self._object_type(node, context=context, where=where), nullable
+        if type_name is None and not node:
+            # a completely empty schema accepts any JSON value
+            return ScalarType(Scalar.ANY), nullable
+        try:
+            return scalar_type(type_name, node.get("format")), nullable
+        except ValueError as error:
+            raise SchemaError(f"{where}: {error}") from error
+
+    def _split_nullable(
+        self, node: Mapping[str, Any], *, where: str
+    ) -> tuple[Mapping[str, Any], bool]:
+        """
+        Normalize the two nullability spellings.
+
+        OpenAPI 3.0 says ``nullable: true``, 3.1 puts ``"null"`` into a
+        type array. Both come out as a plain node plus the flag.
+
+        :param node: the schema node
+        :param where: the schema location, for error messages
+        :return: the node without nullability markers, and the flag
+        """
+        nullable = bool(node.get("nullable", False))
+        type_name = node.get("type")
+        if isinstance(type_name, list):
+            remaining = [entry for entry in type_name if entry != "null"]
+            nullable = nullable or len(remaining) != len(type_name)
+            plain = dict(node)
+            if len(remaining) == 1:
+                plain["type"] = remaining[0]
+            elif not remaining:
+                del plain["type"]
+            else:
+                # several concrete types at once: fall back to Any
+                self._warnings.append(
+                    f"{where}: multi-type {type_name!r} is treated as an untyped value"
+                )
+                del plain["type"]
+            return plain, nullable
+        if nullable:
+            plain = dict(node)
+            del plain["nullable"]
+            return plain, True
+        return node, False
+
+    def _enum_type(self, node: Mapping[str, Any], *, context: str, where: str) -> TypeExpr:
+        """
+        Synthesize an enum class for a schema with ``enum`` values.
+
+        :param node: the schema node
+        :param context: the name the class is derived from
+        :param where: the schema location, for error messages
+        :return: the enum reference
+        """
+        values = [value for value in node["enum"] if value is not None]
+        if not values:
+            raise SchemaError(f"{where}: enum without usable values")
+        if all(isinstance(value, str) for value in values):
+            base = Scalar.STR
+        elif all(isinstance(value, int) and not isinstance(value, bool) for value in values):
+            base = Scalar.INT
+        else:
+            raise SchemaError(f"{where}: only pure string or pure integer enums are supported")
+        member_names = NameRegistry()
+        members = tuple((member_names.claim(constant_name(str(value))), value) for value in values)
+        name = self._class_names.claim(class_name(context))
+        self._models.append(
+            EnumModel(name=name, base=base, members=members, description=node.get("description"))
+        )
+        return EnumType(name)
+
+    def _object_type(self, node: Mapping[str, Any], *, context: str, where: str) -> TypeExpr:
+        """
+        Translate an object schema: a model, a map, or a free-form dict.
+
+        :param node: the schema node
+        :param context: the name an inline model is derived from
+        :param where: the schema location, for error messages
+        :return: the object's type
+        """
+        properties = node.get("properties")
+        additional = node.get("additionalProperties")
+        if properties:
+            if isinstance(additional, Mapping) or additional is True:
+                self._warnings.append(
+                    f"{where}: additionalProperties next to properties is ignored —"
+                    " extra payload keys are dropped"
+                )
+            name = self._class_names.claim(class_name(context))
+            return self._model_type(node, name=name, where=where)
+        if isinstance(additional, Mapping):
+            value_type, _ = self._schema_type(
+                additional, context=f"{context} value", where=f"{where}.additionalProperties"
+            )
+            return MapType(value_type)
+        return MapType(ScalarType(Scalar.ANY))
+
+    def _model_type(self, node: Mapping[str, Any], *, name: str, where: str) -> ModelType:
+        """
+        Synthesize a model dataclass for an object schema with properties.
+
+        :param node: the schema node
+        :param name: the already-claimed Python class name
+        :param where: the schema location, for error messages
+        :return: the model reference
+        """
+        required = set(node.get("required") or ())
+        registry = NameRegistry()
+        fields = []
+        for wire_name, prop in (node.get("properties") or {}).items():
+            if not isinstance(prop, Mapping):
+                raise SchemaError(f"{where}.properties.{wire_name}: the property must be a schema")
+            prop_type, nullable = self._schema_type(
+                prop,
+                context=f"{name} {wire_name}",
+                where=f"{where}.properties.{wire_name}",
+            )
+            is_required = wire_name in required
+            fields.append(
+                Field(
+                    name=registry.claim(field_name(wire_name)),
+                    wire_name=wire_name,
+                    type=prop_type,
+                    required=is_required,
+                    nullable=nullable,
+                    default=None if is_required else self._default_for(prop, prop_type),
+                    description=self._description(prop),
+                )
+            )
+        # plain (non-kw_only) dataclasses need default-less fields first;
+        # the sort is stable, so schema order survives within the groups
+        fields.sort(key=lambda field: not field.required)
+        self._models.append(
+            Model(name=name, fields=tuple(fields), description=node.get("description"))
+        )
+        return ModelType(name)
+
+    def _default_for(self, node: Mapping[str, Any], prop_type: TypeExpr) -> object | None:
+        """
+        The schema default, if generated code can express it as a literal.
+
+        :param node: the schema node
+        :param prop_type: the property's translated type
+        :return: the default value, or ``None`` for "no default"
+        """
+        default = node.get("default")
+        if default is None:
+            return None
+        if isinstance(prop_type, ScalarType) and isinstance(default, (str, int, float, bool)):
+            return default
+        if isinstance(prop_type, EnumType) and isinstance(default, (str, int)):
+            return default
+        return None
+
+    def _description(self, node: Mapping[str, Any]) -> str | None:
+        """
+        The description of a node, looked up through a possible ``$ref``.
+
+        :param node: the schema node
+        :return: the description, if any
+        """
+        if "description" in node:
+            return str(node["description"])
+        if "$ref" in node:
+            target = self._resolver.deref(node)
+            description = target.get("description")
+            return str(description) if description is not None else None
+        return None
+
+    # ------------------------------------------------------------------
+    # paths
+    # ------------------------------------------------------------------
+
+    def _parse_path(self, path: str, path_item: Mapping[str, Any]) -> None:
+        """
+        Translate all operations of one path item.
+
+        :param path: the path template as spelled in the schema
+        :param path_item: the path item node
+        """
+        path_item = self._resolver.deref(path_item)
+        shared_parameters = path_item.get("parameters") or []
+        for method, operation in path_item.items():
+            if method in _METHODS and isinstance(operation, Mapping):
+                self._parse_operation(path, method, operation, shared_parameters)
+
+    def _parse_operation(
+        self,
+        path: str,
+        method: str,
+        operation: Mapping[str, Any],
+        shared_parameters: list[Any],
+    ) -> None:
+        """
+        Translate one operation into an :py:class:`OperationIR`.
+
+        :param path: the path template as spelled in the schema
+        :param method: the lowercase HTTP method
+        :param operation: the operation node
+        :param shared_parameters: the path item's shared parameters
+        """
+        where = f"paths.{path}.{method}"
+        name = self._class_names.claim(
+            operation_class_name(operation.get("operationId"), method, path)
+        )
+        field_names = NameRegistry()
+        params, renames = self._parse_parameters(
+            name, operation, shared_parameters, field_names, where=where
+        )
+        try:
+            placeholders = path_placeholders(path)
+        except ValueError as error:
+            raise SchemaError(f"{where}: malformed path template ({error})") from error
+        declared = {param.wire_name for param in params if param.location is ParamLocation.PATH}
+        if set(placeholders) != declared:
+            raise SchemaError(
+                f"{where}: path parameters {sorted(declared)} do not match the template"
+                f" placeholders {sorted(set(placeholders))}"
+            )
+        body = self._parse_body(name, operation.get("requestBody"), field_names, where=where)
+        response_kind, response_type = self._parse_responses(name, operation, where=where)
+        self._operations.append(
+            OperationIR(
+                class_name=name,
+                method=method.upper(),
+                path_template=rewrite_path(path, renames),
+                wire_path=path,
+                params=tuple(params),
+                body=body,
+                response_kind=response_kind,
+                response_type=response_type,
+                summary=operation.get("summary"),
+                description=operation.get("description"),
+            )
+        )
+
+    def _parse_parameters(
+        self,
+        operation_name: str,
+        operation: Mapping[str, Any],
+        shared_parameters: list[Any],
+        field_names: NameRegistry,
+        *,
+        where: str,
+    ) -> tuple[list[Param], dict[str, str]]:
+        """
+        Merge and translate an operation's parameters.
+
+        Path-item parameters apply to every operation of the path; an
+        operation parameter with the same ``(name, in)`` pair overrides.
+
+        :param operation_name: the operation's class name (context for
+            inline enums)
+        :param operation: the operation node
+        :param shared_parameters: the path item's shared parameters
+        :param field_names: the operation's field name scope
+        :param where: the schema location, for error messages
+        :return: the parameters, and the placeholder renames for the
+            path template
+        """
+        merged: dict[tuple[str, str], Mapping[str, Any]] = {}
+        for node in [*shared_parameters, *(operation.get("parameters") or [])]:
+            parameter = self._resolver.deref(node)
+            merged[(str(parameter.get("name")), str(parameter.get("in")))] = parameter
+        params = []
+        renames = {}
+        for (wire_name, location_name), parameter in merged.items():
+            if location_name not in _PARAM_LOCATIONS:
+                raise SchemaError(
+                    f"{where}: parameter {wire_name!r} in {location_name!r} is not supported"
+                    " (path, query and header parameters are)"
+                )
+            location = _PARAM_LOCATIONS[location_name]
+            schema = parameter.get("schema")
+            if not isinstance(schema, Mapping):
+                raise SchemaError(
+                    f"{where}: parameter {wire_name!r} has no schema —"
+                    " content-typed parameters are not supported"
+                )
+            param_type, nullable = self._schema_type(
+                schema,
+                context=f"{operation_name} {wire_name}",
+                where=f"{where}.parameters.{wire_name}",
+            )
+            python_name = field_names.claim(
+                field_name(wire_name, reserved=RESERVED_OPERATION_FIELDS)
+            )
+            # the spec mandates required: true for path parameters
+            required = location is ParamLocation.PATH or bool(parameter.get("required", False))
+            if location is ParamLocation.PATH:
+                renames[wire_name] = python_name
+            params.append(
+                Param(
+                    name=python_name,
+                    wire_name=wire_name,
+                    location=location,
+                    type=param_type,
+                    required=required,
+                    nullable=nullable,
+                    default=None if required else self._default_for(schema, param_type),
+                    description=parameter.get("description"),
+                )
+            )
+        return params, renames
+
+    def _parse_body(
+        self,
+        operation_name: str,
+        request_body: Any,
+        field_names: NameRegistry,
+        *,
+        where: str,
+    ) -> Body | None:
+        """
+        Translate an operation's request body.
+
+        :param operation_name: the operation's class name (context for
+            inline models)
+        :param request_body: the ``requestBody`` node, if any
+        :param field_names: the operation's field name scope
+        :param where: the schema location, for error messages
+        :return: the body, or ``None`` when the operation has none
+        """
+        if request_body is None:
+            return None
+        if not isinstance(request_body, Mapping):
+            raise SchemaError(f"{where}: requestBody must be an object")
+        request_body = self._resolver.deref(request_body)
+        content = request_body.get("content") or {}
+        required = bool(request_body.get("required", False))
+        json_media = self._json_media_type(content)
+        if json_media is not None:
+            schema = content[json_media].get("schema") or {}
+            return self._json_body(
+                operation_name, schema, required, field_names, where=f"{where}.requestBody"
+            )
+        if "application/x-www-form-urlencoded" in content:
+            schema = content["application/x-www-form-urlencoded"].get("schema") or {}
+            return self._form_body(
+                operation_name, schema, required, field_names, where=f"{where}.requestBody"
+            )
+        raise SchemaError(
+            f"{where}: no supported request media type in {sorted(content)}"
+            " (application/json and application/x-www-form-urlencoded are)"
+        )
+
+    def _json_media_type(self, content: Mapping[str, Any]) -> str | None:
+        """
+        The JSON media type of a content map, if there is one.
+
+        :param content: the ``content`` node
+        :return: ``application/json`` or an ``application/*+json``
+            variant, ``None`` when the content offers neither
+        """
+        for media_type in content:
+            plain = media_type.split(";")[0].strip()
+            if plain == "application/json" or plain.endswith("+json"):
+                return media_type
+        return None
+
+    def _json_body(
+        self,
+        operation_name: str,
+        schema: Mapping[str, Any],
+        required: bool,
+        field_names: NameRegistry,
+        *,
+        where: str,
+    ) -> Body:
+        """
+        Translate a JSON request body.
+
+        An inline object schema explodes into one ``json_field()`` per
+        property (the petstore style); referenced, array and scalar
+        schemas become a single ``json_body()`` field.
+
+        :param operation_name: the operation's class name
+        :param schema: the body schema
+        :param required: whether the request must carry the body
+        :param field_names: the operation's field name scope
+        :param where: the schema location, for error messages
+        :return: the body
+        """
+        if (
+            "$ref" not in schema
+            and schema.get("type", "object") == "object"
+            and "properties" in schema
+        ):
+            body_required = set(schema.get("required") or ()) if required else set()
+            if not required and schema.get("required"):
+                self._warnings.append(
+                    f"{where}: the body is optional, so its required properties"
+                    " are generated as optional fields"
+                )
+            fields = []
+            for wire_name, prop in schema["properties"].items():
+                prop_type, nullable = self._schema_type(
+                    prop,
+                    context=f"{operation_name} {wire_name}",
+                    where=f"{where}.properties.{wire_name}",
+                )
+                is_required = wire_name in body_required
+                fields.append(
+                    Field(
+                        name=field_names.claim(
+                            field_name(wire_name, reserved=RESERVED_OPERATION_FIELDS)
+                        ),
+                        wire_name=wire_name,
+                        type=prop_type,
+                        required=is_required,
+                        nullable=nullable,
+                        default=None if is_required else self._default_for(prop, prop_type),
+                        description=self._description(prop),
+                    )
+                )
+            return Body(kind=BodyKind.JSON_FIELDS, fields=tuple(fields), required=required)
+        body_type, _ = self._schema_type(schema, context=f"{operation_name} body", where=where)
+        name = field_names.claim(field_name("payload", reserved=RESERVED_OPERATION_FIELDS))
+        field = Field(
+            name=name, wire_name=name, type=body_type, required=required, nullable=not required
+        )
+        return Body(kind=BodyKind.JSON_BODY, fields=(field,), type=body_type, required=required)
+
+    def _form_body(
+        self,
+        operation_name: str,
+        schema: Mapping[str, Any],
+        required: bool,
+        field_names: NameRegistry,
+        *,
+        where: str,
+    ) -> Body:
+        """
+        Translate a form-urlencoded request body.
+
+        :param operation_name: the operation's class name
+        :param schema: the body schema
+        :param required: whether the request must carry the body
+        :param field_names: the operation's field name scope
+        :param where: the schema location, for error messages
+        :return: the body
+        """
+        schema = self._resolver.deref(schema)
+        properties = schema.get("properties")
+        if not isinstance(properties, Mapping):
+            raise SchemaError(
+                f"{where}: a form-urlencoded body needs an object schema with properties"
+            )
+        body_required = set(schema.get("required") or ()) if required else set()
+        fields = []
+        for wire_name, prop in properties.items():
+            prop_type, nullable = self._schema_type(
+                prop,
+                context=f"{operation_name} {wire_name}",
+                where=f"{where}.properties.{wire_name}",
+            )
+            if not isinstance(prop_type, (ScalarType, EnumType)) and not (
+                isinstance(prop_type, ArrayType)
+                and isinstance(prop_type.item, (ScalarType, EnumType))
+            ):
+                raise SchemaError(
+                    f"{where}.properties.{wire_name}: form fields must be scalars, enums"
+                    " or arrays of those"
+                )
+            is_required = wire_name in body_required
+            fields.append(
+                Field(
+                    name=field_names.claim(
+                        field_name(wire_name, reserved=RESERVED_OPERATION_FIELDS)
+                    ),
+                    wire_name=wire_name,
+                    type=prop_type,
+                    required=is_required,
+                    nullable=nullable,
+                    default=None if is_required else self._default_for(prop, prop_type),
+                    description=self._description(prop),
+                )
+            )
+        return Body(kind=BodyKind.FORM_FIELDS, fields=tuple(fields), required=required)
+
+    def _parse_responses(
+        self, operation_name: str, operation: Mapping[str, Any], *, where: str
+    ) -> tuple[ResponseKind, TypeExpr | None]:
+        """
+        Pick and translate the success response.
+
+        The lowest 2xx status wins (a ``2XX`` range counts last); JSON
+        content types the result, no content means ``None``, non-JSON
+        content is returned as raw bytes.
+
+        :param operation_name: the operation's class name
+        :param operation: the operation node
+        :param where: the schema location, for error messages
+        :return: the response kind and the model type, if any
+        """
+        responses = operation.get("responses") or {}
+        chosen: tuple[int, str] | None = None
+        for status in responses:
+            key = str(status)
+            if key.isdigit() and 200 <= int(key) <= 299:
+                rank = (int(key), key)
+            elif key.upper() == "2XX":
+                rank = (300, key)  # after every concrete 2xx status
+            else:
+                continue
+            if chosen is None or rank < chosen:
+                chosen = rank
+        if chosen is None:
+            # no success response documented: stay with None — check()
+            # still validates the 2xx status at runtime
+            return ResponseKind.NONE, None
+        response = self._resolver.deref(responses[chosen[1]])
+        content = response.get("content") or {}
+        if not content or chosen[0] == 204:
+            return ResponseKind.NONE, None
+        json_media = self._json_media_type(content)
+        if json_media is None:
+            return ResponseKind.BYTES, None
+        schema = content[json_media].get("schema")
+        if not isinstance(schema, Mapping):
+            return ResponseKind.MODEL, ScalarType(Scalar.ANY)
+        response_type, _ = self._schema_type(
+            schema,
+            context=f"{operation_name} response",
+            where=f"{where}.responses.{chosen[1]}",
+        )
+        return ResponseKind.MODEL, response_type
+
+    # ------------------------------------------------------------------
+    # security
+    # ------------------------------------------------------------------
+
+    def _parse_security(self) -> tuple[SecurityScheme, ...]:
+        """
+        Translate the security schemes the document actually uses.
+
+        A scheme becomes client credentials when the document-level
+        ``security`` or any operation's ``security`` references it.
+        Unsupported kinds (OAuth2, OpenID Connect, cookies) are skipped
+        with a warning. Per-operation differences are not modeled: all
+        referenced schemes end up as constructor credentials.
+
+        :return: the client credential schemes
+        """
+        schemes = (self._document.get("components") or {}).get("securitySchemes") or {}
+        used = self._referenced_scheme_names()
+        names = NameRegistry()
+        for reserved in _RESERVED_CREDENTIAL_NAMES:
+            names.claim(reserved)
+        translated = []
+        for scheme_name, node in schemes.items():
+            if scheme_name not in used:
+                continue
+            node = self._resolver.deref(node)
+            where = f"components.securitySchemes.{scheme_name}"
+            kind = self._security_kind(node)
+            if kind is None:
+                self._warnings.append(
+                    f"{where}: unsupported security scheme type"
+                    f" {node.get('type')!r} — pass these credentials yourself"
+                    " (default headers or an APIClient.prepare override)"
+                )
+                continue
+            if kind is SecurityKind.HTTP_BEARER:
+                param_name, wire_name = names.claim("token"), None
+            elif kind is SecurityKind.HTTP_BASIC:
+                # rendered as the two parameters username/password
+                param_name, wire_name = names.claim("username"), None
+                names.claim("password")
+            else:
+                param_name = names.claim(field_name(scheme_name))
+                wire_name = str(node.get("name", ""))
+                if not wire_name:
+                    raise SchemaError(f"{where}: apiKey scheme without a parameter name")
+            translated.append(
+                SecurityScheme(kind=kind, param_name=param_name, wire_name=wire_name)
+            )
+        return tuple(translated)
+
+    def _referenced_scheme_names(self) -> set[str]:
+        """
+        The names of all security schemes any requirement references.
+
+        :return: the referenced scheme names
+        """
+        requirements = list(self._document.get("security") or [])
+        for path_item in (self._document.get("paths") or {}).values():
+            if not isinstance(path_item, Mapping):
+                continue
+            for method in _METHODS:
+                operation = path_item.get(method)
+                if isinstance(operation, Mapping):
+                    requirements.extend(operation.get("security") or [])
+        return {name for requirement in requirements for name in requirement}
+
+    def _security_kind(self, node: Mapping[str, Any]) -> SecurityKind | None:
+        """
+        Map one security scheme node onto the supported kinds.
+
+        :param node: the scheme node
+        :return: the kind, or ``None`` when unsupported
+        """
+        scheme_type = str(node.get("type", "")).lower()
+        if scheme_type == "http":
+            http_scheme = str(node.get("scheme", "")).lower()
+            if http_scheme == "bearer":
+                return SecurityKind.HTTP_BEARER
+            if http_scheme == "basic":
+                return SecurityKind.HTTP_BASIC
+            return None
+        if scheme_type == "apikey":
+            location = str(node.get("in", "")).lower()
+            if location == "header":
+                return SecurityKind.API_KEY_HEADER
+            if location == "query":
+                return SecurityKind.API_KEY_QUERY
+            return None
+        return None

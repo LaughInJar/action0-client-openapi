@@ -37,6 +37,7 @@ from .ir import SecurityKind
 from .ir import SecurityScheme
 from .ir import TypeExpr
 from .loader import load_schema
+from .parse import parse_api
 from .resolve import RefResolver
 
 __version__: str = "0.1.0"
@@ -64,4 +65,5 @@ __all__ = [
     "SecurityScheme",
     "TypeExpr",
     "load_schema",
+    "parse_api",
 ]
