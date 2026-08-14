@@ -36,6 +36,9 @@ yaml = [
     "pyyaml>=6.0",
 ]
 
+[project.scripts]
+action0-openapi = "action0.openapi.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/LaughInJar/action0-client-openapi"
 Documentation = "https://laughinjar.github.io/action0-client-openapi/"

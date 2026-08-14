@@ -30,6 +30,8 @@ uv run mypy            # type-check (strict; files are configured in pyproject.t
 uv run pyright         # type-check
 uv run ty check        # type-check
 
+uv run action0-openapi tests/action0/openapi/fixtures/petstore.json -o /tmp/generated  # the CLI
+
 uv run --group docs sphinx-build -W --keep-going -b html docs docs/_build/html  # build docs
 
 uv build               # build sdist + wheel into dist/
@@ -39,10 +41,25 @@ uv build               # build sdist + wheel into dist/
 
 ## Architecture
 
-The generator design is not settled yet — this section grows with the implementation. What is fixed:
+The pipeline under `src/action0/openapi/` is **load → resolve → parse (→ IR) → render → write**; every stage is a pure function over plain data except `loader` (reads the file) and `generate.write_package` (writes the package). The CLI (`action0-openapi`, `[project.scripts]` → `cli:main`) chains them.
 
-- The package root is `src/action0/openapi/`; currently it holds only `__init__.py` (docstring, `__version__`, `__all__`) and `py.typed`.
-- Generated code targets the `action0-client` public API: `Operation`/`JsonOperation` subclasses with the field specifiers from `action0.client.fields` (`query()`, `header()`, `path_param()`, `json_field()`, ...), sent through `APIClient`. Study `../action0-client/CLAUDE.md` and its `docs/usage/operations.md` before designing generator output.
+- `errors.py` — `SchemaError`, the one exception for input problems; messages are printed by the CLI as-is, no traceback.
+- `loader.py` — `load_schema(path)`: JSON by default, YAML via lazy PyYAML import (missing → "install the yaml extra" message), JSON→YAML fallback for unknown suffixes, OpenAPI 3.0/3.1 validation (Swagger 2.0 gets a dedicated message).
+- `resolve.py` — `RefResolver`: local `#/...` JSON pointers only (RFC 6901 unescaping, list indices), `deref()` follows `$ref` chains with cycle detection.
+- `ir.py` — the frozen intermediate representation (`Api`, `Model`, `EnumModel`, `Field`, `OperationIR`, `Param`, `Body`, `SecurityScheme`, the `TypeExpr` algebra). All IR names are final Python names; schema spellings survive as `wire_name`/`wire_path`. `Api.warnings` collects flattened/skipped constructs. A future dynamic (import-time) mode would consume this same IR.
+- `names.py` — spelling conversion + validity: PascalCase/snake_case/UPPER_SNAKE, keyword and reserved-name escaping (trailing underscore; `RESERVED_OPERATION_FIELDS` includes the seven field-specifier names — a field named `query` would shadow the specifier for later fields of the class), digit-led prefixes, `NameRegistry` dedup, path-template rewriting (`{petId}` → `{pet_id}` — `path_param()` has no wire-name parameter, the placeholder must equal the field name).
+- `types.py` — leaf type mapping: `type`/`format` → IR scalar, `annotation()`, `imports_for()`, `converter_expr()` (the JSON→typed expression, nested comprehensions with collision-free variables).
+- `parse.py` — `parse_api(document) -> Api`. Components first; **model components register their class before their properties are walked** so self references work; inline object/enum schemas are synthesized into named classes via one shared class-name registry (pre-claimed: names generated modules import, like `JsonOperation`). Nullability (3.0 `nullable`, 3.1 type arrays, `oneOf/anyOf` [T, null]) normalizes to one flag. Bodies: inline object → `json_field()`s, `$ref`/array/scalar → single `payload` `json_body()`, form → `form_field()`s. Response: lowest 2xx; JSON → model, none → `Operation[None]`, non-JSON → `Operation[bytes]`. Referenced security schemes → client credentials.
+- `render.py` — code emission as plain string building (no template engine). `Lines`/`Imports` reproduce this repo's ruff format/isort shapes **exactly** (the golden tests enforce byte-stability); over-long conversions are wrapped the way ruff format wraps them (whole parenthesized ternary one level deeper if it fits, else split before `if`/`else`). `render_models` / `render_operations` / `render_client` / `render_init`. UUID fields get `serialize=str` (the one type action0-client's serializers reject); apiKey-in-query auth becomes a `prepare()` override.
+- `generate.py` — `generate_package` (five files incl. `py.typed`, versioned do-not-edit header), `write_package` (refuses to overwrite without force), `default_package_name`/`default_client_name`.
+- `cli.py` — stdlib argparse; exit 0/1; warnings → stderr, written files → stdout.
+
+Generated code targets the `action0-client` public API (`Operation`/`JsonOperation`, the field specifiers, `APIClient[BackendT_co]`) and must itself pass ruff format/check, mypy strict, pyright and ty. `examples/petstore.py` in `../action0-client` is the canonical output shape; study its `CLAUDE.md` before changing emitter output.
+
+Testing setup worth knowing:
+
+- `tests/action0/openapi/fixtures/petstore.json` (+ `.yaml` twin) exercises the whole supported subset; `tests/action0/openapi/golden/petstore_client/` is the package generated from it, checked in. The golden package is pinned four ways: byte-comparison (`test_generate.py`, generator version normalized away), pytest import (runs `__init_subclass__` validation of every generated operation), the repository-wide mypy/pyright/ty runs (it lives under `tests/`), and `ruff format --check`/`ruff check` run from `test_render.py`. When emitter output changes intentionally, regenerate the golden package (`write_package(generate_package(...), GOLDEN, force=True)`) and review the diff.
+- `test_e2e.py` imports the golden package and drives it through `action0.client.testing.StubBackend`, asserting both wire directions.
 
 Conventions:
 

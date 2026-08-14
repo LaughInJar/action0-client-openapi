@@ -1,0 +1,207 @@
+openapi: 3.0.3
+info:
+  title: Petstore
+  version: 1.0.0
+servers:
+- url: https://petstore.example.com/{basePath}
+  variables:
+    basePath:
+      default: v1
+security:
+- BearerAuth: []
+- LegacyOAuth: []
+paths:
+  /pets:
+    get:
+      operationId: listPets
+      summary: List all pets.
+      parameters:
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 20
+      - name: tags
+        in: query
+        schema:
+          type: array
+          items:
+            type: string
+      - name: X-Request-Id
+        in: header
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: the pets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Pet'
+    post:
+      operationId: createPet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - name
+              properties:
+                name:
+                  type: string
+                tag:
+                  type: string
+      responses:
+        '201':
+          description: the new pet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pet'
+  /pets/{petId}:
+    parameters:
+    - name: petId
+      in: path
+      required: true
+      schema:
+        type: integer
+    get:
+      operationId: getPet
+      responses:
+        '200':
+          description: the pet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pet'
+    put:
+      operationId: replacePet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Pet'
+      responses:
+        '200':
+          description: the stored pet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pet'
+    delete:
+      operationId: deletePet
+      responses:
+        '204':
+          description: the pet is gone
+  /pets/{petId}/photo:
+    get:
+      operationId: getPetPhoto
+      parameters:
+      - name: petId
+        in: path
+        required: true
+        schema:
+          type: integer
+      responses:
+        '200':
+          description: the photo
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+  /oauth/token:
+    post:
+      operationId: createToken
+      security:
+      - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+              - grant_type
+              properties:
+                grant_type:
+                  type: string
+                scope:
+                  type: string
+      responses:
+        '200':
+          description: the token
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - access_token
+                properties:
+                  access_token:
+                    type: string
+                  expires_in:
+                    type: integer
+components:
+  schemas:
+    Pet:
+      type: object
+      description: One pet of the store.
+      required:
+      - id
+      - name
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        status:
+          $ref: '#/components/schemas/PetStatus'
+        bornOn:
+          type: string
+          format: date
+          nullable: true
+        owner:
+          $ref: '#/components/schemas/Owner'
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        friends:
+          type: array
+          items:
+            $ref: '#/components/schemas/Pet'
+    PetStatus:
+      type: string
+      description: The pet's sale status.
+      enum:
+      - available
+      - on-sale
+      - sold
+    Owner:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+        class:
+          type: string
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+    ApiKeyAuth:
+      type: apiKey
+      in: query
+      name: api_key
+    LegacyOAuth:
+      type: oauth2
+      flows: {}

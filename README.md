@@ -10,26 +10,50 @@ plus the model classes their results are parsed into. The generated code
 is plain, readable `action0-client` code — it depends on
 `action0-client` only, not on this package — so it runs synchronously,
 on asyncio, on Twisted or on an execution model of your own, decided by
-the backend you plug in:
+the backend you plug in.
 
-```python
-client = APIClient(RequestsBackend(), "https://api.example.com/v1")
-pet = client.send(GetPetById(pet_id=42))  # Pet
-
-client = APIClient(AsyncHttpxBackend(), "https://api.example.com/v1")
-pet = await client.send(GetPetById(pet_id=42))  # Awaitable[Pet]
+```shell
+uv add --dev action0-client-openapi     # or: pip install action0-client-openapi
+action0-openapi petstore.json -o src/   # YAML schemas: install the "yaml" extra
 ```
 
-(`GetPetById` and `Pet` are generated from the schema's
-`getPetById` operation and `Pet` component.)
+```
+src/petstore_client/__init__.py
+src/petstore_client/client.py
+src/petstore_client/models.py
+src/petstore_client/operations.py
+src/petstore_client/py.typed
+```
+
+Using the generated client — the backend decides the execution model,
+and the static types follow it:
+
+```python
+from action0.client.backends.requests import RequestsBackend
+from petstore_client import GetPet, PetstoreClient
+
+client = PetstoreClient(RequestsBackend(), token="...")
+pet = client.send(GetPet(pet_id=42))  # Pet
+
+from action0.client.backends.httpx import AsyncHttpxBackend
+
+client = PetstoreClient(AsyncHttpxBackend(), token="...")
+pet = await client.send(GetPet(pet_id=42))  # Awaitable[Pet]
+```
+
+Generated code is meant to be checked in and reviewed like hand-written
+code: it is readable, ruff-clean and fully typed — mypy strict, pyright
+and ty pass on it. Models become plain dataclasses with generated
+JSON converters, endpoints become `Operation` subclasses, security
+schemes become client constructor credentials. The [schema support
+matrix](https://laughinjar.github.io/action0-client-openapi/usage/schema-support.html)
+lists exactly which OpenAPI 3.0/3.1 constructs are covered and what is
+deliberately deferred (oneOf unions, remote $refs, ...).
 
 Requires Python 3.11 or newer.
 
 Full documentation including the API reference:
 <https://laughinjar.github.io/action0-client-openapi/>
-
-**Status:** early scaffold — the generator design and implementation are
-in progress; nothing is generated yet.
 
 ## Development
 
