@@ -21,6 +21,7 @@ schema location; lesser omissions are reported as warnings.
 | object without properties, or an empty schema | `dict[str, Any]` / `Any` |
 | 3.0 `nullable: true`, 3.1 `type: [T, "null"]`, `oneOf`/`anyOf` of one type and `null` | `... \| None` |
 | `allOf` with exactly one subschema | unwrapped |
+| `allOf` of object schemas (the base-plus-extension inheritance pattern) | flattened into one model: `properties` and `required` united, recursively; properties next to `allOf` count too |
 
 Inline object and enum schemas are synthesized into named classes: an
 inline response object of `createToken` becomes `CreateTokenResponse`,
@@ -69,8 +70,10 @@ to pass those credentials yourself (default headers or an
 
 - `oneOf` / `anyOf` unions of several concrete types, and
   `discriminator` polymorphism.
-- `allOf` composition of several subschemas — flatten the schema before
-  generating.
+- `allOf` parts that are not object schemas, or that define the same
+  property differently — flatten those by hand before generating.
+  (Constraint-only keywords inside `allOf` parts, like `minProperties`,
+  are ignored.)
 - Remote and file `$ref`s (`other.yaml#/...`) — bundle the document
   first; only local `#/...` references resolve.
 - Cookie parameters, content-typed parameters, request bodies other

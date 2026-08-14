@@ -305,14 +305,160 @@ class EdgeCaseTestCase(unittest.TestCase):
         with self.assertRaisesRegex(SchemaError, "components.schemas.Box.*oneOf"):
             self.parse_component("Box", {"oneOf": [{"type": "string"}, {"type": "integer"}]})
 
-    def test_allof_single_unwraps_multi_rejected(self) -> None:
+    def test_allof_single_unwraps(self) -> None:
         """
-        Test allOf: one subschema unwraps, several are rejected.
+        Test that allOf with one subschema unwraps to it, whatever its
+        kind.
         """
         api = self.parse_component("Box", {"allOf": [{"type": "string"}]})
         self.assertEqual(api.models, ())
-        with self.assertRaisesRegex(SchemaError, "allOf"):
-            self.parse_component("Box", {"allOf": [{"type": "string"}, {"minLength": 1}]})
+
+    def test_allof_inheritance_flattens(self) -> None:
+        """
+        Test the base-plus-extension pattern: properties and required
+        merge, the base description carries over, self references
+        through the child work.
+        """
+        api = parse_api(
+            minimal(
+                components={
+                    "schemas": {
+                        "Cat": {
+                            "allOf": [
+                                {"$ref": "#/components/schemas/Pet"},
+                                {
+                                    "type": "object",
+                                    "required": ["meow"],
+                                    "properties": {
+                                        "meow": {"type": "boolean"},
+                                        "friend": {"$ref": "#/components/schemas/Cat"},
+                                    },
+                                },
+                            ]
+                        },
+                        "Pet": {
+                            "type": "object",
+                            "description": "A pet.",
+                            "required": ["name"],
+                            "properties": {"name": {"type": "string"}},
+                        },
+                    }
+                }
+            )
+        )
+        cat = api.models[0]
+        assert isinstance(cat, Model)
+        self.assertEqual(cat.name, "Cat")
+        self.assertEqual(cat.description, "A pet.")
+        self.assertEqual(
+            [(field.name, field.required) for field in cat.fields],
+            [("name", True), ("meow", True), ("friend", False)],
+        )
+        self.assertEqual(cat.fields[2].type, ModelType("Cat"))
+        # the base component still becomes its own model
+        self.assertEqual(api.models[1].name, "Pet")
+
+    def test_allof_sibling_properties_merge(self) -> None:
+        """
+        Test that properties spelled next to allOf count as one more
+        part, and equal duplicate definitions are tolerated.
+        """
+        api = self.parse_component(
+            "Box",
+            {
+                "allOf": [
+                    {"type": "object", "properties": {"a": {"type": "string"}}},
+                    {"type": "object", "properties": {"a": {"type": "string"}}},
+                ],
+                "properties": {"b": {"type": "integer"}},
+                "required": ["b"],
+            },
+        )
+        box = api.models[0]
+        assert isinstance(box, Model)
+        self.assertEqual(
+            [(field.name, field.required) for field in box.fields],
+            [("b", True), ("a", False)],
+        )
+
+    def test_allof_nested(self) -> None:
+        """
+        Test that allOf inside an allOf part flattens recursively.
+        """
+        api = self.parse_component(
+            "Box",
+            {
+                "allOf": [
+                    {"allOf": [{"type": "object", "properties": {"a": {"type": "string"}}}]},
+                    {"type": "object", "properties": {"b": {"type": "integer"}}},
+                ]
+            },
+        )
+        box = api.models[0]
+        assert isinstance(box, Model)
+        self.assertEqual([field.name for field in box.fields], ["a", "b"])
+
+    def test_allof_conflicting_property_rejected(self) -> None:
+        """
+        Test that parts disagreeing about a property are rejected.
+        """
+        with self.assertRaisesRegex(SchemaError, "'a' differently"):
+            self.parse_component(
+                "Box",
+                {
+                    "allOf": [
+                        {"type": "object", "properties": {"a": {"type": "string"}}},
+                        {"type": "object", "properties": {"a": {"type": "integer"}}},
+                    ]
+                },
+            )
+
+    def test_allof_non_object_part_rejected(self) -> None:
+        """
+        Test that mixing non-object subschemas into a merge is rejected.
+        """
+        with self.assertRaisesRegex(SchemaError, "allOf can only merge object schemas"):
+            self.parse_component(
+                "Box",
+                {
+                    "allOf": [
+                        {"type": "object", "properties": {"a": {"type": "string"}}},
+                        {"type": "string"},
+                    ]
+                },
+            )
+
+    def test_allof_nullable_part_propagates(self) -> None:
+        """
+        Test that a nullable subschema makes the merged type nullable.
+        """
+        api = parse_api(
+            minimal(
+                components={
+                    "schemas": {
+                        "Holder": {
+                            "type": "object",
+                            "properties": {
+                                "box": {
+                                    "allOf": [
+                                        {
+                                            "type": "object",
+                                            "nullable": True,
+                                            "properties": {"a": {"type": "string"}},
+                                        },
+                                        {"type": "object", "properties": {"b": {}}},
+                                    ]
+                                }
+                            },
+                        }
+                    }
+                }
+            )
+        )
+        holder = api.models[-1]
+        assert isinstance(holder, Model)
+        self.assertEqual(holder.name, "Holder")
+        self.assertTrue(holder.fields[0].nullable)
 
     def test_free_form_objects(self) -> None:
         """
