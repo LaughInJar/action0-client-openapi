@@ -38,6 +38,10 @@ from .ir import ScalarType
 from .ir import SecurityKind
 from .ir import SecurityScheme
 from .ir import TypeExpr
+from .ir import UnionCase
+from .ir import UnionCheck
+from .ir import UnionModel
+from .ir import UnionType
 from .names import RESERVED_OPERATION_FIELDS
 from .names import NameRegistry
 from .names import class_name
@@ -124,7 +128,7 @@ class _Parser:
         # translated right now" and makes reference cycles that need no
         # forward declaration (model -> model) work
         self._components: dict[str, tuple[TypeExpr, bool] | None] = {}
-        self._models: list[Model | EnumModel] = []
+        self._models: list[Model | EnumModel | UnionModel] = []
         self._operations: list[OperationIR] = []
         self._warnings: list[str] = []
 
@@ -320,14 +324,19 @@ class _Parser:
         for keyword in ("oneOf", "anyOf"):
             if keyword in node:
                 parts = [part for part in node[keyword] if not _is_null_schema(part)]
-                if len(parts) != 1:
-                    raise SchemaError(
-                        f"{where}: {keyword} with {len(parts)} alternatives is not supported —"
-                        " union results are not part of the supported subset yet"
+                nullable = nullable or len(parts) != len(node[keyword])
+                if not parts:
+                    raise SchemaError(f"{where}: {keyword} with only null alternatives")
+                if len(parts) == 1:
+                    # the common "X or null" idiom: unwrap the one subschema
+                    inner, inner_nullable = self._schema_type(
+                        parts[0], context=context, where=where
                     )
-                # the common "X or null" idiom: unwrap the one subschema
-                inner, inner_nullable = self._schema_type(parts[0], context=context, where=where)
-                return inner, nullable or inner_nullable or len(parts) != len(node[keyword])
+                    return inner, nullable or inner_nullable
+                return (
+                    self._union_type(node, parts, keyword, context=context, where=where),
+                    nullable,
+                )
 
         if "enum" in node:
             return self._enum_type(node, context=context, where=where), nullable
@@ -352,6 +361,256 @@ class _Parser:
         except ValueError as error:
             raise SchemaError(f"{where}: {error}") from error
 
+    def _union_type(
+        self,
+        node: Mapping[str, Any],
+        parts: list[Any],
+        keyword: str,
+        *,
+        context: str,
+        where: str,
+    ) -> TypeExpr:
+        """
+        Translate a multi-alternative ``oneOf``/``anyOf`` into a union.
+
+        The members must be distinguishable in a decoded payload — by
+        JSON type, by the ``discriminator`` tag, or by a required key
+        unique to the member. Indistinguishable unions degrade to an
+        untyped value with a warning.
+
+        :param node: the schema node carrying the keyword
+        :param parts: the non-null alternatives
+        :param keyword: ``oneOf`` or ``anyOf``, for messages
+        :param context: the name the union alias is derived from
+        :param where: the schema location, for error messages
+        :return: the union reference, or ``Any`` when it degrades
+        """
+        name = self._class_names.claim(class_name(context))
+        members = []
+        component_names: list[str | None] = []
+        for index, part in enumerate(parts):
+            part_where = f"{where}.{keyword}.{index}"
+            if not isinstance(part, Mapping):
+                raise SchemaError(f"{part_where}: the alternative must be a schema")
+            member, _ = self._schema_type(
+                part, context=f"{name} option {index + 1}", where=part_where
+            )
+            members.append(member)
+            # remember the component name of $ref alternatives: it is the
+            # implicit discriminator tag
+            ref = part.get("$ref")
+            component_names.append(
+                RefResolver.ref_name(ref)
+                if isinstance(ref, str) and ref.startswith(_SCHEMAS_PREFIX)
+                else None
+            )
+        dispatch = self._union_cases(node, members, component_names, where=where)
+        if dispatch is None:
+            self._warnings.append(
+                f"{where}: the {keyword} alternatives cannot be told apart in a payload"
+                " (no JSON-type difference, discriminator or unique required key) —"
+                " generated as an untyped value"
+            )
+            return ScalarType(Scalar.ANY)
+        cases, discriminator = dispatch
+        self._models.append(
+            UnionModel(
+                name=name,
+                members=tuple(members),
+                cases=cases,
+                discriminator=discriminator,
+                description=node.get("description"),
+            )
+        )
+        return UnionType(name, tuple(members))
+
+    #: the isinstance() bucket of each scalar in a decoded payload
+    _JSON_TYPES = {
+        Scalar.STR: "str",
+        Scalar.DATE: "str",
+        Scalar.DATETIME: "str",
+        Scalar.UUID: "str",
+        Scalar.BYTES: "str",
+        Scalar.INT: "int",
+        Scalar.FLOAT: "float",
+        Scalar.BOOL: "bool",
+    }
+
+    def _json_type(self, member: TypeExpr) -> str | None:
+        """
+        The ``isinstance`` bucket of one union member.
+
+        :param member: the member type
+        :return: the Python type name a decoded value of the member
+            satisfies, or ``None`` when the member matches anything
+        """
+        match member:
+            case ScalarType(kind=kind):
+                return self._JSON_TYPES.get(kind)
+            case ArrayType():
+                return "list"
+            case MapType() | ModelType():
+                return "dict"
+            case EnumType(name=name):
+                for model in self._models:
+                    if isinstance(model, EnumModel) and model.name == name:
+                        return "str" if model.base is Scalar.STR else "int"
+                return None
+            case UnionType():
+                return None
+
+    def _union_cases(
+        self,
+        node: Mapping[str, Any],
+        members: list[TypeExpr],
+        component_names: list[str | None],
+        *,
+        where: str,
+    ) -> tuple[tuple[UnionCase, ...], str | None] | None:
+        """
+        Compute the dispatch of a union's converter.
+
+        The ladder: members alone in their JSON-type bucket dispatch by
+        ``isinstance`` (``bool`` before ``int`` — bools are ints);
+        several object members dispatch by the ``discriminator`` tag or,
+        without one, by a required key unique to each member.
+
+        :param node: the schema node carrying the union
+        :param members: the translated members
+        :param component_names: the schema component name per member
+            (``None`` for inline alternatives)
+        :param where: the schema location, for error messages
+        :return: the cases and the discriminator property, or ``None``
+            when the members are indistinguishable
+        """
+        buckets: dict[str, list[int]] = {}
+        for index, member in enumerate(members):
+            json_type = self._json_type(member)
+            if json_type is None:
+                return None
+            buckets.setdefault(json_type, []).append(index)
+        cases = []
+        for json_type in ("bool", "int", "float", "str", "list", "dict"):
+            indexes = buckets.get(json_type, [])
+            if len(indexes) == 1 and json_type != "dict":
+                cases.append(
+                    UnionCase(
+                        member=members[indexes[0]], check=UnionCheck.JSON_TYPE, value=json_type
+                    )
+                )
+            elif len(indexes) > 1 and json_type != "dict":
+                return None
+        object_indexes = buckets.get("dict", [])
+        if len(object_indexes) == 1:
+            cases.append(
+                UnionCase(
+                    member=members[object_indexes[0]], check=UnionCheck.JSON_TYPE, value="dict"
+                )
+            )
+            return tuple(cases), None
+        if not object_indexes:
+            return tuple(cases), None
+        if not all(isinstance(members[index], ModelType) for index in object_indexes):
+            return None
+        discriminator = node.get("discriminator") or {}
+        tag_property = discriminator.get("propertyName")
+        if tag_property:
+            object_cases = self._tag_cases(
+                discriminator, members, component_names, object_indexes, where=where
+            )
+            if object_cases is None:
+                return None
+            return tuple(cases) + object_cases, str(tag_property)
+        object_cases = self._key_cases(members, object_indexes)
+        if object_cases is None:
+            return None
+        return tuple(cases) + object_cases, None
+
+    def _tag_cases(
+        self,
+        discriminator: Mapping[str, Any],
+        members: list[TypeExpr],
+        component_names: list[str | None],
+        object_indexes: list[int],
+        *,
+        where: str,
+    ) -> tuple[UnionCase, ...] | None:
+        """
+        Build the discriminator-tag cases of a union's object members.
+
+        Explicit ``mapping`` entries (tag to reference) win; a member
+        without one falls back to its component name, the spec's
+        implicit convention.
+
+        :param discriminator: the ``discriminator`` node
+        :param members: the translated members
+        :param component_names: the schema component name per member
+        :param object_indexes: which members are object models
+        :param where: the schema location, for error messages
+        :return: the cases, or ``None`` when a member has no tag
+        """
+        tag_by_component = {}
+        for tag, reference in (discriminator.get("mapping") or {}).items():
+            reference_name = (
+                RefResolver.ref_name(reference) if isinstance(reference, str) else str(reference)
+            )
+            tag_by_component[reference_name] = str(tag)
+        cases = []
+        for index in object_indexes:
+            component = component_names[index]
+            if component is None:
+                return None
+            cases.append(
+                UnionCase(
+                    member=members[index],
+                    check=UnionCheck.TAG,
+                    value=tag_by_component.get(component, component),
+                )
+            )
+        return tuple(cases)
+
+    def _key_cases(
+        self, members: list[TypeExpr], object_indexes: list[int]
+    ) -> tuple[UnionCase, ...] | None:
+        """
+        Build presence-of-key cases for object members without a
+        discriminator.
+
+        Each member needs a *required* property that no other object
+        member even declares.
+
+        :param members: the translated members
+        :param object_indexes: which members are object models
+        :return: the cases, or ``None`` when a member has no such key
+        """
+        models = {}
+        for index in object_indexes:
+            member = members[index]
+            assert isinstance(member, ModelType)
+            for model in self._models:
+                if isinstance(model, Model) and model.name == member.name:
+                    models[index] = model
+                    break
+            else:
+                return None
+        cases = []
+        for index in object_indexes:
+            other_properties = {
+                field.wire_name
+                for other, model in models.items()
+                if other != index
+                for field in model.fields
+            }
+            unique = [
+                field.wire_name
+                for field in models[index].fields
+                if field.required and field.wire_name not in other_properties
+            ]
+            if not unique:
+                return None
+            cases.append(UnionCase(member=members[index], check=UnionCheck.KEY, value=unique[0]))
+        return tuple(cases)
+
     def _split_nullable(
         self, node: Mapping[str, Any], *, where: str
     ) -> tuple[Mapping[str, Any], bool]:
@@ -375,12 +634,18 @@ class _Parser:
                 plain["type"] = remaining[0]
             elif not remaining:
                 del plain["type"]
-            else:
-                # several concrete types at once: fall back to Any
+            elif "oneOf" in plain or "anyOf" in plain:
+                # a type array next to an explicit union: too entangled
                 self._warnings.append(
                     f"{where}: multi-type {type_name!r} is treated as an untyped value"
                 )
                 del plain["type"]
+            else:
+                # several concrete types at once: the 3.1 shorthand for a
+                # union of bare types (structural keywords like items or
+                # properties do not survive the split)
+                del plain["type"]
+                plain["oneOf"] = [{"type": entry} for entry in remaining]
             return plain, nullable
         if nullable:
             plain = dict(node)

@@ -6,6 +6,7 @@ import datetime
 import enum
 from dataclasses import dataclass
 from typing import Any
+from typing import TypeAlias
 
 
 class PetStatus(enum.Enum):
@@ -38,6 +39,71 @@ def owner_from_json(data: Any) -> Owner:
 
 
 @dataclass
+class Cat:
+    """The ``Cat`` model."""
+
+    species: str
+    name: str
+    meow: bool
+
+
+def cat_from_json(data: Any) -> Cat:
+    """
+    Build a :py:class:`Cat` from one decoded JSON object.
+
+    :param data: the decoded JSON object
+    :return: the Cat
+    """
+    return Cat(
+        species=data["species"],
+        name=data["name"],
+        meow=data["meow"],
+    )
+
+
+@dataclass
+class Dog:
+    """The ``Dog`` model."""
+
+    species: str
+    name: str
+    bark: bool
+
+
+def dog_from_json(data: Any) -> Dog:
+    """
+    Build a :py:class:`Dog` from one decoded JSON object.
+
+    :param data: the decoded JSON object
+    :return: the Dog
+    """
+    return Dog(
+        species=data["species"],
+        name=data["name"],
+        bark=data["bark"],
+    )
+
+
+#: A pet's companion animal.
+Companion: TypeAlias = "Cat | Dog"
+
+
+def companion_from_json(data: Any) -> Companion:
+    """
+    Build a :py:data:`Companion` member from one decoded JSON value.
+
+    :param data: the decoded JSON value
+    :return: the matching member
+    :raises ValueError: if the value matches no member
+    """
+    if data.get("species") == "cat":
+        return cat_from_json(data)
+    if data.get("species") == "Dog":
+        return dog_from_json(data)
+    raise ValueError("the payload matches no member of Companion")
+
+
+@dataclass
 class Pet:
     """One pet of the store."""
 
@@ -48,6 +114,7 @@ class Pet:
     owner: Owner | None = None
     labels: dict[str, str] | None = None
     friends: list[Pet] | None = None
+    companion: Companion | None = None
 
 
 def pet_from_json(data: Any) -> Pet:
@@ -71,6 +138,30 @@ def pet_from_json(data: Any) -> Pet:
             if data.get("friends") is not None
             else None
         ),
+        companion=(
+            companion_from_json(data["companion"]) if data.get("companion") is not None else None
+        ),
+    )
+
+
+@dataclass
+class Animal:
+    """The ``Animal`` model."""
+
+    species: str
+    name: str
+
+
+def animal_from_json(data: Any) -> Animal:
+    """
+    Build a :py:class:`Animal` from one decoded JSON object.
+
+    :param data: the decoded JSON object
+    :return: the Animal
+    """
+    return Animal(
+        species=data["species"],
+        name=data["name"],
     )
 
 

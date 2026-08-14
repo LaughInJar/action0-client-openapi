@@ -20,8 +20,19 @@ schema location; lesser omissions are reported as warnings.
 | object with only `additionalProperties: <schema>` | `dict[str, ...]` |
 | object without properties, or an empty schema | `dict[str, Any]` / `Any` |
 | 3.0 `nullable: true`, 3.1 `type: [T, "null"]`, `oneOf`/`anyOf` of one type and `null` | `... \| None` |
+| `oneOf` / `anyOf` of several types | a generated union: a type alias (`Companion: TypeAlias = "Cat \| Dog"`) plus a dispatching converter |
+| `discriminator` (with or without `mapping`) | tag dispatch in the union's converter; members without a mapping entry use their component name, the spec's implicit convention |
+| 3.1 multi-type arrays (`type: ["string", "integer"]`) | a union of the bare types |
 | `allOf` with exactly one subschema | unwrapped |
 | `allOf` of object schemas (the base-plus-extension inheritance pattern) | flattened into one model: `properties` and `required` united, recursively; properties next to `allOf` count too |
+
+Union members must be recognizable in a decoded payload — by JSON type
+(a `string \| object` union), by the `discriminator` tag, or by a
+required property no other member declares. A union whose members
+cannot be told apart (two plain-string members, object members with
+only shared optional properties, a member accepting anything) degrades
+to an untyped value, with a warning naming the schema location — add a
+`discriminator` to fix that.
 
 Inline object and enum schemas are synthesized into named classes: an
 inline response object of `createToken` becomes `CreateTokenResponse`,
@@ -68,8 +79,6 @@ to pass those credentials yourself (default headers or an
 
 ## Not supported (yet)
 
-- `oneOf` / `anyOf` unions of several concrete types, and
-  `discriminator` polymorphism.
 - `allOf` parts that are not object schemas, or that define the same
   property differently — flatten those by hand before generating.
   (Constraint-only keywords inside `allOf` parts, like `minProperties`,
