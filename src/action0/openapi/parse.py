@@ -841,6 +841,7 @@ class _Parser:
                 response_type=response_type,
                 summary=operation.get("summary"),
                 description=operation.get("description"),
+                tag=str(operation["tags"][0]) if operation.get("tags") else None,
             )
         )
 

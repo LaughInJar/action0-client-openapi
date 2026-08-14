@@ -26,6 +26,9 @@
         "/pets": {
             "get": {
                 "operationId": "listPets",
+                "tags": [
+                    "pets"
+                ],
                 "summary": "List all pets.",
                 "parameters": [
                     {
@@ -73,13 +76,18 @@
             },
             "post": {
                 "operationId": "createPet",
+                "tags": [
+                    "pets"
+                ],
                 "requestBody": {
                     "required": true,
                     "content": {
                         "application/json": {
                             "schema": {
                                 "type": "object",
-                                "required": ["name"],
+                                "required": [
+                                    "name"
+                                ],
                                 "properties": {
                                     "name": {
                                         "type": "string"
@@ -119,6 +127,9 @@
             ],
             "get": {
                 "operationId": "getPet",
+                "tags": [
+                    "pets"
+                ],
                 "responses": {
                     "200": {
                         "description": "the pet",
@@ -134,6 +145,9 @@
             },
             "put": {
                 "operationId": "replacePet",
+                "tags": [
+                    "pets"
+                ],
                 "requestBody": {
                     "required": true,
                     "content": {
@@ -159,6 +173,9 @@
             },
             "delete": {
                 "operationId": "deletePet",
+                "tags": [
+                    "pets"
+                ],
                 "responses": {
                     "204": {
                         "description": "the pet is gone"
@@ -197,6 +214,9 @@
         "/oauth/token": {
             "post": {
                 "operationId": "createToken",
+                "tags": [
+                    "auth"
+                ],
                 "security": [
                     {
                         "ApiKeyAuth": []
@@ -208,7 +228,9 @@
                         "application/x-www-form-urlencoded": {
                             "schema": {
                                 "type": "object",
-                                "required": ["grant_type"],
+                                "required": [
+                                    "grant_type"
+                                ],
                                 "properties": {
                                     "grant_type": {
                                         "type": "string"
@@ -228,7 +250,9 @@
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": ["access_token"],
+                                    "required": [
+                                        "access_token"
+                                    ],
                                     "properties": {
                                         "access_token": {
                                             "type": "string"
@@ -250,7 +274,10 @@
             "Pet": {
                 "type": "object",
                 "description": "One pet of the store.",
-                "required": ["id", "name"],
+                "required": [
+                    "id",
+                    "name"
+                ],
                 "properties": {
                     "id": {
                         "type": "integer",
@@ -311,7 +338,9 @@
                     },
                     {
                         "type": "object",
-                        "required": ["meow"],
+                        "required": [
+                            "meow"
+                        ],
                         "properties": {
                             "meow": {
                                 "type": "boolean"
@@ -327,7 +356,9 @@
                     },
                     {
                         "type": "object",
-                        "required": ["bark"],
+                        "required": [
+                            "bark"
+                        ],
                         "properties": {
                             "bark": {
                                 "type": "boolean"
@@ -338,7 +369,10 @@
             },
             "Animal": {
                 "type": "object",
-                "required": ["species", "name"],
+                "required": [
+                    "species",
+                    "name"
+                ],
                 "properties": {
                     "species": {
                         "type": "string"
@@ -351,11 +385,17 @@
             "PetStatus": {
                 "type": "string",
                 "description": "The pet's sale status.",
-                "enum": ["available", "on-sale", "sold"]
+                "enum": [
+                    "available",
+                    "on-sale",
+                    "sold"
+                ]
             },
             "Owner": {
                 "type": "object",
-                "required": ["name"],
+                "required": [
+                    "name"
+                ],
                 "properties": {
                     "name": {
                         "type": "string"

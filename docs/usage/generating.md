@@ -29,6 +29,12 @@ action0-openapi petstore.yaml -o src/ \
 YAML schemas need the `yaml` extra ({doc}`installation`). Existing
 files are never overwritten unless you pass `--force`.
 
+For large APIs, `--split-by-tag` puts each OpenAPI tag's operations
+into a module of its own (`operations_pets.py`, `operations_auth.py`,
+...; untagged operations stay in `operations.py`). The package root
+re-exports everything either way, so user imports —
+`from petstore_client import ListPets` — do not depend on the layout.
+
 Constructs the generator flattens or skips (an unsupported security
 scheme, `additionalProperties` next to `properties`, ...) are reported
 as warnings on stderr; constructs outside the supported subset stop the

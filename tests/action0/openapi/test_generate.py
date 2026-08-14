@@ -87,6 +87,92 @@ class GeneratePackageTestCase(unittest.TestCase):
                 self.assertEqual(normalized(content), normalized(expected))
 
 
+class SplitByTagTestCase(unittest.TestCase):
+    """
+    tests for the per-tag operations layout
+    """
+
+    files: dict[str, str]
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        api = parse_api(load_schema(FIXTURES / "petstore.json"))
+        cls.files = generate_package(
+            api, client_name="PetstoreClient", schema_name="petstore.json", split_by_tag=True
+        )
+
+    def test_file_set(self) -> None:
+        """
+        Test the layout: one module per tag, untagged operations stay in
+        operations.py.
+        """
+        self.assertEqual(
+            sorted(self.files),
+            [
+                "__init__.py",
+                "client.py",
+                "models.py",
+                "operations.py",
+                "operations_auth.py",
+                "operations_pets.py",
+                "py.typed",
+            ],
+        )
+
+    def test_classes_land_in_their_tag_module(self) -> None:
+        """
+        Test that every operation class sits in its tag's module.
+        """
+        self.assertIn("class ListPets", self.files["operations_pets.py"])
+        self.assertIn("class DeletePet", self.files["operations_pets.py"])
+        self.assertIn("class CreateToken", self.files["operations_auth.py"])
+        self.assertIn("class GetPetPhoto", self.files["operations.py"])
+        self.assertNotIn("class ListPets", self.files["operations.py"])
+
+    def test_init_imports_follow_the_layout(self) -> None:
+        """
+        Test that the package root re-exports from the right modules, so
+        user imports do not depend on the layout.
+        """
+        init = self.files["__init__.py"]
+        self.assertIn("from .operations_pets import ListPets", init)
+        self.assertIn("from .operations_auth import CreateToken", init)
+        self.assertIn("from .operations import GetPetPhoto", init)
+
+    def test_split_package_works(self) -> None:
+        """
+        Test the split package end to end: written, imported, one
+        operation sent through a stub backend, and ruff-clean.
+        """
+        import importlib
+        import shutil
+        import subprocess
+        import sys
+
+        from action0.client.testing import StubBackend
+        from action0.req import Response
+
+        with tempfile.TemporaryDirectory() as tmp:
+            write_package(self.files, Path(tmp) / "split_petstore")
+            sys.path.insert(0, tmp)
+            try:
+                package = importlib.import_module("split_petstore")
+                client = package.PetstoreClient(StubBackend(Response(204)), "t", "k")
+                self.assertIsNone(client.send(package.DeletePet(pet_id=1)))
+            finally:
+                sys.path.remove(tmp)
+            ruff = shutil.which("ruff")
+            assert ruff is not None
+            for arguments in [["format", "--check"], ["check"]]:
+                result = subprocess.run(
+                    [ruff, *arguments, str(Path(tmp) / "split_petstore")],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
 class WritePackageTestCase(unittest.TestCase):
     """
     tests for :py:func:`action0.openapi.generate.write_package`

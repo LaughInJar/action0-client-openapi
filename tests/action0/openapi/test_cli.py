@@ -87,6 +87,19 @@ class CliTestCase(unittest.TestCase):
         self.assertIn("class ZooClient", client)
         self.assertIn('base_url: str = "https://zoo.example.com"', client)
 
+    def test_split_by_tag(self) -> None:
+        """
+        Test that --split-by-tag produces the per-tag layout.
+        """
+        code, _, _ = self.run_cli(
+            str(FIXTURES / "petstore.json"), "-o", str(self.output), "--split-by-tag"
+        )
+        self.assertEqual(code, 0)
+        package = self.output / "petstore_client"
+        self.assertTrue((package / "operations_pets.py").exists())
+        self.assertTrue((package / "operations_auth.py").exists())
+        self.assertIn("GetPetPhoto", (package / "operations.py").read_text("utf-8"))
+
     def test_existing_output_needs_force(self) -> None:
         """
         Test the refusal to overwrite, and that --force overrides it.
