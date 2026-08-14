@@ -29,6 +29,20 @@ from action0.openapi import SecurityScheme
    :members:
 ```
 
+## Name mangling
+
+```{eval-rst}
+.. automodule:: action0.openapi.names
+   :members:
+```
+
+## Type mapping
+
+```{eval-rst}
+.. automodule:: action0.openapi.types
+   :members:
+```
+
 ## Errors
 
 ```{eval-rst}
