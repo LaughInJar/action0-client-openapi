@@ -17,6 +17,10 @@ and the emitter renders it as a Python package. Input problems raise
 """
 
 from .errors import SchemaError
+from .generate import default_client_name
+from .generate import default_package_name
+from .generate import generate_package
+from .generate import write_package
 from .ir import Api
 from .ir import ArrayType
 from .ir import Body
@@ -64,6 +68,10 @@ __all__ = [
     "SecurityKind",
     "SecurityScheme",
     "TypeExpr",
+    "default_client_name",
+    "default_package_name",
+    "generate_package",
     "load_schema",
     "parse_api",
+    "write_package",
 ]

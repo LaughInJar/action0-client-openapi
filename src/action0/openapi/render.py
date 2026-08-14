@@ -16,9 +16,24 @@ from __future__ import annotations
 import json
 
 from .ir import Api
+from .ir import ArrayType
+from .ir import Body
+from .ir import BodyKind
 from .ir import EnumModel
+from .ir import EnumType
 from .ir import Field
+from .ir import MapType
 from .ir import Model
+from .ir import ModelType
+from .ir import OperationIR
+from .ir import Param
+from .ir import ParamLocation
+from .ir import ResponseKind
+from .ir import Scalar
+from .ir import ScalarType
+from .ir import SecurityKind
+from .ir import SecurityScheme
+from .ir import TypeExpr
 from .names import converter_name
 from .types import annotation
 from .types import converter_expr
@@ -331,3 +346,454 @@ def _literal(value: object) -> str:
     if isinstance(value, str):
         return json.dumps(value)
     return repr(value)
+
+
+#: the field specifier each parameter location uses
+_SPECIFIERS = {
+    ParamLocation.PATH: "path_param",
+    ParamLocation.QUERY: "query",
+    ParamLocation.HEADER: "header",
+}
+
+
+def render_operations(api: Api, header: str) -> str:
+    """
+    Render the ``operations.py`` module: one operation class per
+    endpoint.
+
+    :param api: the intermediate representation
+    :param header: the generated-by header comment line (without ``#``)
+    :return: the module's source text
+    """
+    lines = Lines()
+    lines.write(f"# {header}")
+    body = Lines()
+    imports = Imports()
+    imports.add("from __future__ import annotations")
+    enum_members = _enum_member_lookup(api)
+    for operation in api.operations:
+        imports.add("from action0.req import Method")
+        body.separate()
+        _render_operation(operation, body, imports, enum_members)
+    imports.render(lines)
+    lines.separate()
+    lines.extend(body)
+    return lines.text()
+
+
+def _enum_member_lookup(api: Api) -> dict[str, dict[object, str]]:
+    """
+    Map every enum class to its value-to-member lookup.
+
+    Schema defaults arrive as raw wire values; rendering them as field
+    defaults needs the member names.
+
+    :param api: the intermediate representation
+    :return: enum class name to (value to member name)
+    """
+    return {
+        model.name: {value: member for member, value in model.members}
+        for model in api.models
+        if isinstance(model, EnumModel)
+    }
+
+
+def _render_operation(
+    operation: OperationIR,
+    lines: Lines,
+    imports: Imports,
+    enum_members: dict[str, dict[object, str]],
+) -> None:
+    """
+    Render one operation class.
+
+    :param operation: the operation
+    :param lines: the module builder
+    :param imports: the module's import collector
+    :param enum_members: the enum default lookup
+    """
+    base, result = _operation_base(operation, imports)
+    lines.write(f"class {operation.class_name}({base}):")
+    lines.indent()
+    title = f"``{operation.method} {operation.wire_path}``"
+    if operation.summary:
+        title += f" — {operation.summary}"
+    lines.docstring(title + (f"\n\n{operation.description}" if operation.description else ""))
+    lines.write()
+    lines.write(f"method = Method.{operation.method}")
+    lines.write(f"path = {_literal(operation.path_template)}")
+    if operation.path_template != operation.wire_path:
+        # keep the original spelling visible next to the rewritten one
+        lines.write(f"# the schema spells the path {_literal(operation.wire_path)}")
+    lines.write()
+    for param in operation.params:
+        specifier = _SPECIFIERS[param.location]
+        rename = param.wire_name if param.location is not ParamLocation.PATH else None
+        lines.write(_field_line(param, specifier, rename, enum_members, imports))
+    if operation.body is not None:
+        _render_body_fields(operation.body, lines, imports, enum_members)
+    _render_load(operation, result, lines, imports)
+    lines.dedent()
+
+
+def _operation_base(operation: OperationIR, imports: Imports) -> tuple[str, str]:
+    """
+    The base class and result annotation of one operation.
+
+    :param operation: the operation
+    :param imports: the module's import collector
+    :return: the base class text and the result type text
+    """
+    if operation.response_kind is ResponseKind.MODEL:
+        assert operation.response_type is not None
+        result = annotation(operation.response_type)
+        imports.add("from action0.client import JsonOperation")
+        imports.add(*imports_for(operation.response_type))
+        _import_classes(operation.response_type, imports)
+        return f"JsonOperation[{result}]", result
+    imports.add("from action0.client import Operation", "from action0.req import Response")
+    result = "None" if operation.response_kind is ResponseKind.NONE else "bytes"
+    return f"Operation[{result}]", result
+
+
+def _render_body_fields(
+    body: Body,
+    lines: Lines,
+    imports: Imports,
+    enum_members: dict[str, dict[object, str]],
+) -> None:
+    """
+    Render the field lines of an operation's request body.
+
+    :param body: the body
+    :param lines: the module builder
+    :param imports: the module's import collector
+    :param enum_members: the enum default lookup
+    """
+    if body.kind is BodyKind.JSON_BODY:
+        (field,) = body.fields
+        lines.write(_field_line(field, "json_body", None, enum_members, imports))
+        return
+    specifier = "json_field" if body.kind is BodyKind.JSON_FIELDS else "form_field"
+    for field in body.fields:
+        rename = field.wire_name if field.wire_name != field.name else None
+        lines.write(_field_line(field, specifier, rename, enum_members, imports))
+
+
+def _field_line(
+    field: Field | Param,
+    specifier: str,
+    rename: str | None,
+    enum_members: dict[str, dict[object, str]],
+    imports: Imports,
+) -> str:
+    """
+    Render one operation field with its specifier.
+
+    :param field: the field or parameter
+    :param specifier: the specifier function name
+    :param rename: the wire name to pass positionally, if it differs
+    :param enum_members: the enum default lookup
+    :param imports: the module's import collector
+    :return: the field's source line
+    """
+    imports.add(f"from action0.client import {specifier}")
+    imports.add(*imports_for(field.type))
+    _import_classes(field.type, imports)
+    arguments = []
+    if rename is not None and rename != field.name:
+        arguments.append(_literal(rename))
+    default = None
+    if not field.required:
+        default = _default_literal(field, enum_members)
+        arguments.append(f"default={default}")
+    serialize = _serialize_argument(field.type)
+    if serialize is not None:
+        arguments.append(serialize)
+    optional = field.nullable or (not field.required and default == "None")
+    rendered = annotation(field.type, optional=optional)
+    return f"{field.name}: {rendered} = {specifier}({', '.join(arguments)})"
+
+
+def _default_literal(field: Field | Param, enum_members: dict[str, dict[object, str]]) -> str:
+    """
+    Render an optional field's default value.
+
+    :param field: the field or parameter
+    :param enum_members: the enum default lookup
+    :return: the default's literal text (``None`` when the schema
+        declares none)
+    """
+    if field.default is None:
+        return "None"
+    if isinstance(field.type, EnumType):
+        member = enum_members[field.type.name].get(field.default)
+        if member is None:
+            return "None"
+        return f"{field.type.name}.{member}"
+    return _literal(field.default)
+
+
+def _serialize_argument(t: TypeExpr) -> str | None:
+    """
+    The ``serialize=`` argument a field needs, if any.
+
+    action0-client serializes enums, dates and dataclasses on its own;
+    UUIDs are the one generated type its serializers reject, so UUID
+    fields get an explicit ``str`` conversion.
+
+    :param t: the field's type
+    :return: the argument text, or ``None``
+    """
+    if t == ScalarType(Scalar.UUID):
+        return "serialize=str"
+    if isinstance(t, ArrayType) and t.item == ScalarType(Scalar.UUID):
+        return "serialize=lambda values: [str(value) for value in values]"
+    return None
+
+
+def _render_load(operation: OperationIR, result: str, lines: Lines, imports: Imports) -> None:
+    """
+    Render the response-loading method of one operation.
+
+    :param operation: the operation
+    :param result: the result type text
+    :param lines: the module builder
+    :param imports: the module's import collector
+    """
+    lines.write()
+    if operation.response_kind is ResponseKind.MODEL:
+        assert operation.response_type is not None
+        imports.add("from typing import Any")
+        _import_converters(operation.response_type, imports)
+        lines.write(f"def load_json(self, data: Any) -> {result}:")
+        lines.indent()
+        lines.docstring(":param data: the decoded JSON payload\n:return: the parsed result")
+        expression = converter_expr(operation.response_type, "data")
+        lines.write(f"return {expression}")
+        lines.dedent()
+        return
+    lines.write(f"def load(self, response: Response) -> {result}:")
+    lines.indent()
+    lines.docstring(":param response: the checked response\n:return: the parsed result")
+    if operation.response_kind is ResponseKind.NONE:
+        lines.write("return None")
+    else:
+        lines.write('return response.body_bytes() or b""')
+    lines.dedent()
+
+
+def _import_classes(t: TypeExpr, imports: Imports) -> None:
+    """
+    Collect the ``.models`` imports a type annotation needs.
+
+    :param t: the type
+    :param imports: the module's import collector
+    """
+    match t:
+        case ModelType(name=name) | EnumType(name=name):
+            imports.add(f"from .models import {name}")
+        case ArrayType(item=inner) | MapType(value=inner):
+            _import_classes(inner, imports)
+        case ScalarType():
+            pass
+
+
+def _import_converters(t: TypeExpr, imports: Imports) -> None:
+    """
+    Collect the ``.models`` converter imports a load expression needs.
+
+    :param t: the type
+    :param imports: the module's import collector
+    """
+    match t:
+        case ModelType(name=name):
+            imports.add(f"from .models import {converter_name(name)}")
+        case ArrayType(item=inner) | MapType(value=inner):
+            _import_converters(inner, imports)
+        case ScalarType() | EnumType():
+            pass
+
+
+def render_client(api: Api, header: str, client_name: str) -> str:
+    """
+    Render the ``client.py`` module: the API client subclass with the
+    base URL and the security schemes baked in.
+
+    :param api: the intermediate representation
+    :param header: the generated-by header comment line (without ``#``)
+    :param client_name: the client class name
+    :return: the module's source text
+    """
+    lines = Lines()
+    lines.write(f"# {header}")
+    body = Lines()
+    imports = Imports()
+    imports.add(
+        "from __future__ import annotations",
+        "from action0.client import APIClient",
+        "from action0.client import BackendT_co",
+    )
+    query_schemes = [s for s in api.security if s.kind is SecurityKind.API_KEY_QUERY]
+    if any(s.kind is SecurityKind.HTTP_BASIC for s in api.security):
+        imports.add("import base64")
+    if query_schemes:
+        imports.add("from action0.req import Request")
+    body.write(f"class {client_name}(APIClient[BackendT_co]):")
+    body.indent()
+    body.docstring(f"The {api.title} API client.")
+    body.write()
+    _render_client_init(api, body)
+    if query_schemes:
+        body.write()
+        _render_client_prepare(query_schemes, body)
+    body.dedent()
+    imports.render(lines)
+    lines.separate()
+    lines.extend(body)
+    return lines.text()
+
+
+def _credential_parameters(api: Api) -> list[tuple[str, str]]:
+    """
+    The credential ``__init__`` parameters, with their docstring text.
+
+    :param api: the intermediate representation
+    :return: ``(parameter name, description)`` pairs
+    """
+    parameters = []
+    for scheme in api.security:
+        if scheme.kind is SecurityKind.HTTP_BEARER:
+            parameters.append((scheme.param_name, "the bearer token"))
+        elif scheme.kind is SecurityKind.HTTP_BASIC:
+            parameters.append(("username", "the basic-auth user name"))
+            parameters.append(("password", "the basic-auth password"))
+        elif scheme.kind is SecurityKind.API_KEY_HEADER:
+            parameters.append(
+                (scheme.param_name, f"the API key sent as the {scheme.wire_name} header")
+            )
+        else:
+            parameters.append(
+                (
+                    scheme.param_name,
+                    f"the API key sent as the {scheme.wire_name} query parameter",
+                )
+            )
+    return parameters
+
+
+def _render_client_init(api: Api, lines: Lines) -> None:
+    """
+    Render the client's ``__init__``.
+
+    :param api: the intermediate representation
+    :param lines: the module builder
+    """
+    credentials = _credential_parameters(api)
+    base_url = f"base_url: str = {_literal(api.base_url)}" if api.base_url else "base_url: str"
+    lines.write("def __init__(")
+    lines.indent()
+    lines.write("self,")
+    lines.write("backend: BackendT_co,")
+    for name, _ in credentials:
+        lines.write(f"{name}: str,")
+    lines.write(f"{base_url},")
+    lines.dedent()
+    lines.write(") -> None:")
+    lines.indent()
+    documentation = ":param backend: any sync, async or Twisted backend\n"
+    for name, description in credentials:
+        documentation += f":param {name}: {description}\n"
+    documentation += ":param base_url: the API root"
+    lines.docstring(documentation)
+    headers = []
+    for scheme in api.security:
+        if scheme.kind is SecurityKind.HTTP_BEARER:
+            headers.append(f'"Authorization": f"Bearer {{{scheme.param_name}}}"')
+        elif scheme.kind is SecurityKind.HTTP_BASIC:
+            lines.write(
+                'credentials = base64.b64encode(f"{username}:{password}".encode()).decode()'
+            )
+            headers.append('"Authorization": f"Basic {credentials}"')
+        elif scheme.kind is SecurityKind.API_KEY_HEADER:
+            headers.append(f"{_literal(scheme.wire_name)}: {scheme.param_name}")
+    if headers:
+        call = f"super().__init__(backend, base_url, headers={{{', '.join(headers)}}})"
+        if lines.level * 4 + len(call) <= _LINE_LIMIT:
+            lines.write(call)
+        else:
+            lines.write("super().__init__(")
+            lines.indent()
+            lines.write("backend,")
+            lines.write("base_url,")
+            lines.write("headers={")
+            lines.indent()
+            for entry in headers:
+                lines.write(f"{entry},")
+            lines.dedent()
+            lines.write("},")
+            lines.dedent()
+            lines.write(")")
+    else:
+        lines.write("super().__init__(backend, base_url)")
+    for scheme in api.security:
+        if scheme.kind is SecurityKind.API_KEY_QUERY:
+            lines.write(f"self._{scheme.param_name} = {scheme.param_name}")
+    lines.dedent()
+
+
+def _render_client_prepare(query_schemes: list[SecurityScheme], lines: Lines) -> None:
+    """
+    Render the ``prepare`` override adding query credentials.
+
+    :param query_schemes: the apiKey-in-query schemes
+    :param lines: the module builder
+    """
+    lines.write("def prepare(self, request: Request) -> Request:")
+    lines.indent()
+    lines.docstring(
+        "Add the query credentials to every request.\n"
+        "\n"
+        ":param request: the request built from an operation\n"
+        ":return: the request to actually send"
+    )
+    lines.write("request = super().prepare(request)")
+    for scheme in query_schemes:
+        lines.write(
+            f"request.url.query.add({_literal(scheme.wire_name)}, self._{scheme.param_name})"
+        )
+    lines.write("return request")
+    lines.dedent()
+
+
+def render_init(api: Api, header: str, client_name: str) -> str:
+    """
+    Render the generated package's ``__init__.py``: docstring and
+    re-exports of the client, the models and the operations.
+
+    :param api: the intermediate representation
+    :param header: the generated-by header comment line (without ``#``)
+    :param client_name: the client class name
+    :return: the module's source text
+    """
+    lines = Lines()
+    lines.write(f"# {header}")
+    lines.docstring(f"Typed API client for {api.title} {api.version}.")
+    imports = Imports()
+    imports.add(f"from .client import {client_name}")
+    names = [client_name]
+    for model in api.models:
+        imports.add(f"from .models import {model.name}")
+        names.append(model.name)
+    for operation in api.operations:
+        imports.add(f"from .operations import {operation.class_name}")
+        names.append(operation.class_name)
+    imports.render(lines)
+    lines.separate(1)
+    lines.write("__all__ = [")
+    lines.indent()
+    for name in sorted(names):
+        lines.write(f"{_literal(name)},")
+    lines.dedent()
+    lines.write("]")
+    return lines.text()
