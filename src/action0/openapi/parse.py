@@ -190,6 +190,11 @@ class _Parser:
             raise SchemaError(f"components.schemas.{name}: the schema must be an object")
         component_where = f"components.schemas.{name}"
         plain, nullable = self._split_nullable(node, where=component_where)
+        if "allOf" in plain and (len(plain["allOf"]) != 1 or plain.get("properties")):
+            # flatten before the model check, so an allOf component gets
+            # the same self-reference pre-registration as a plain model
+            plain, parts_nullable = self._merge_all_of(plain, where=component_where)
+            nullable = nullable or parts_nullable
         if self._is_model_schema(plain):
             # model components register their class *before* their
             # properties are walked, so self references (Pet -> Pet)
@@ -217,6 +222,69 @@ class _Parser:
         type_name = plain.get("type")
         return bool(plain.get("properties")) and (type_name == "object" or type_name is None)
 
+    def _merge_all_of(self, node: Mapping[str, Any], *, where: str) -> tuple[dict[str, Any], bool]:
+        """
+        Flatten an ``allOf`` composition into one object schema.
+
+        The common inheritance pattern — a ``$ref`` to the base plus an
+        object with the extra properties — merges by uniting the parts'
+        ``properties`` and ``required`` (properties defined by the node
+        itself, next to ``allOf``, count as one more part). Conflicting
+        definitions of the same property and non-object subschemas are
+        outside the supported subset.
+
+        :param node: the schema node with the ``allOf`` keyword
+        :param where: the schema location, for error messages
+        :return: the merged object schema, and whether any part was
+            nullable
+        :raises SchemaError: on non-object or conflicting subschemas
+        """
+        properties: dict[str, Any] = {}
+        required: list[str] = []
+        description = node.get("description")
+        nullable = False
+        parts = list(node["allOf"])
+        if node.get("properties") or node.get("required"):
+            parts.append(
+                {key: node[key] for key in ("type", "properties", "required") if key in node}
+            )
+        for index, raw in enumerate(parts):
+            part_where = f"{where}.allOf.{index}"
+            if not isinstance(raw, Mapping):
+                raise SchemaError(f"{part_where}: the subschema must be an object")
+            part = self._resolver.deref(raw)
+            part, part_nullable = self._split_nullable(part, where=part_where)
+            nullable = nullable or part_nullable
+            if "allOf" in part:
+                part, deep_nullable = self._merge_all_of(part, where=part_where)
+                nullable = nullable or deep_nullable
+            if (
+                any(keyword in part for keyword in ("oneOf", "anyOf", "enum"))
+                or part.get("type", "object") != "object"
+            ):
+                raise SchemaError(
+                    f"{part_where}: allOf can only merge object schemas —"
+                    " flatten the schema or drop the non-object subschema"
+                )
+            for name, prop in (part.get("properties") or {}).items():
+                if name in properties and properties[name] != prop:
+                    raise SchemaError(
+                        f"{where}: the allOf subschemas define the property {name!r}"
+                        " differently — flatten the schema"
+                    )
+                properties.setdefault(name, prop)
+            for name in part.get("required") or ():
+                if name not in required:
+                    required.append(name)
+            if description is None:
+                description = part.get("description")
+        merged: dict[str, Any] = {"type": "object", "properties": properties}
+        if required:
+            merged["required"] = required
+        if description is not None:
+            merged["description"] = description
+        return merged, nullable
+
     def _schema_type(
         self, node: Mapping[str, Any], *, context: str, where: str
     ) -> tuple[TypeExpr, bool]:
@@ -242,13 +310,13 @@ class _Parser:
 
         if "allOf" in node:
             parts = list(node["allOf"])
-            if len(parts) != 1:
-                raise SchemaError(
-                    f"{where}: allOf composition is not supported (found {len(parts)} subschemas)"
-                    " — flatten the schema"
-                )
-            inner, inner_nullable = self._schema_type(parts[0], context=context, where=where)
-            return inner, nullable or inner_nullable
+            if len(parts) == 1 and not node.get("properties"):
+                # a single subschema of any kind simply unwraps
+                inner, inner_nullable = self._schema_type(parts[0], context=context, where=where)
+                return inner, nullable or inner_nullable
+            merged, parts_nullable = self._merge_all_of(node, where=where)
+            inner, inner_nullable = self._schema_type(merged, context=context, where=where)
+            return inner, nullable or parts_nullable or inner_nullable
         for keyword in ("oneOf", "anyOf"):
             if keyword in node:
                 parts = [part for part in node[keyword] if not _is_null_schema(part)]
