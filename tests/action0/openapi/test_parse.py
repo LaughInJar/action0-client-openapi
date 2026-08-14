@@ -180,6 +180,15 @@ class PetstoreTestCase(unittest.TestCase):
             ],
         )
 
+    def test_tags(self) -> None:
+        """
+        Test that the first tag is kept and untagged operations carry
+        None.
+        """
+        self.assertEqual(self.operation("ListPets").tag, "pets")
+        self.assertEqual(self.operation("CreateToken").tag, "auth")
+        self.assertIsNone(self.operation("GetPetPhoto").tag)
+
     def test_query_and_header_params(self) -> None:
         """
         Test ListPets: query defaults, array params, header UUID params.

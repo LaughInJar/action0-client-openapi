@@ -14,6 +14,8 @@ paths:
   /pets:
     get:
       operationId: listPets
+      tags:
+      - pets
       summary: List all pets.
       parameters:
       - name: limit
@@ -43,6 +45,8 @@ paths:
                   $ref: '#/components/schemas/Pet'
     post:
       operationId: createPet
+      tags:
+      - pets
       requestBody:
         required: true
         content:
@@ -72,6 +76,8 @@ paths:
         type: integer
     get:
       operationId: getPet
+      tags:
+      - pets
       responses:
         '200':
           description: the pet
@@ -81,6 +87,8 @@ paths:
                 $ref: '#/components/schemas/Pet'
     put:
       operationId: replacePet
+      tags:
+      - pets
       requestBody:
         required: true
         content:
@@ -96,6 +104,8 @@ paths:
                 $ref: '#/components/schemas/Pet'
     delete:
       operationId: deletePet
+      tags:
+      - pets
       responses:
         '204':
           description: the pet is gone
@@ -119,6 +129,8 @@ paths:
   /oauth/token:
     post:
       operationId: createToken
+      tags:
+      - auth
       security:
       - ApiKeyAuth: []
       requestBody:

@@ -294,6 +294,9 @@ class OperationIR:
         :py:attr:`ResponseKind.MODEL`; ``None`` otherwise)
     :param summary: the schema's summary, for the docstring
     :param description: the schema's description, for the docstring
+    :param tag: the operation's first ``tags`` entry, if any — the
+        grouping key when the generated package splits operations into
+        per-tag modules
     """
 
     class_name: str
@@ -306,6 +309,7 @@ class OperationIR:
     response_type: TypeExpr | None = None
     summary: str | None = None
     description: str | None = None
+    tag: str | None = None
 
 
 class SecurityKind(enum.Enum):

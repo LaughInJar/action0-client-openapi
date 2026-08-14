@@ -14,6 +14,8 @@ conversions are wrapped the way ruff format wraps them).
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
+from collections.abc import Sequence
 
 from .ir import Api
 from .ir import ArrayType
@@ -434,13 +436,16 @@ _SPECIFIERS = {
 }
 
 
-def render_operations(api: Api, header: str) -> str:
+def render_operations(
+    api: Api, header: str, operations: "Sequence[OperationIR] | None" = None
+) -> str:
     """
-    Render the ``operations.py`` module: one operation class per
-    endpoint.
+    Render one operations module: one operation class per endpoint.
 
     :param api: the intermediate representation
     :param header: the generated-by header comment line (without ``#``)
+    :param operations: the operations to render into this module (all of
+        the API's when ``None`` — per-tag splitting passes subsets)
     :return: the module's source text
     """
     lines = Lines()
@@ -449,7 +454,7 @@ def render_operations(api: Api, header: str) -> str:
     imports = Imports()
     imports.add("from __future__ import annotations")
     enum_members = _enum_member_lookup(api)
-    for operation in api.operations:
+    for operation in api.operations if operations is None else operations:
         imports.add("from action0.req import Method")
         body.separate()
         _render_operation(operation, body, imports, enum_members)
@@ -847,7 +852,12 @@ def _render_client_prepare(query_schemes: list[SecurityScheme], lines: Lines) ->
     lines.dedent()
 
 
-def render_init(api: Api, header: str, client_name: str) -> str:
+def render_init(
+    api: Api,
+    header: str,
+    client_name: str,
+    operation_modules: "Mapping[str, str] | None" = None,
+) -> str:
     """
     Render the generated package's ``__init__.py``: docstring and
     re-exports of the client, the models and the operations.
@@ -855,6 +865,9 @@ def render_init(api: Api, header: str, client_name: str) -> str:
     :param api: the intermediate representation
     :param header: the generated-by header comment line (without ``#``)
     :param client_name: the client class name
+    :param operation_modules: operation class name to the module it
+        lives in (every class in ``operations`` when ``None`` — per-tag
+        splitting passes the actual layout)
     :return: the module's source text
     """
     lines = Lines()
@@ -867,7 +880,8 @@ def render_init(api: Api, header: str, client_name: str) -> str:
         imports.add(f"from .models import {model.name}")
         names.append(model.name)
     for operation in api.operations:
-        imports.add(f"from .operations import {operation.class_name}")
+        module = (operation_modules or {}).get(operation.class_name, "operations")
+        imports.add(f"from .{module} import {operation.class_name}")
         names.append(operation.class_name)
     imports.render(lines)
     lines.separate(1)

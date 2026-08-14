@@ -66,6 +66,14 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--split-by-tag",
+        action="store_true",
+        help=(
+            "put each OpenAPI tag's operations into a module of its own"
+            " (operations_<tag>.py) instead of one operations.py"
+        ),
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="overwrite existing files in the output directory",
@@ -93,7 +101,12 @@ def main(argv: "Sequence[str] | None" = None) -> int:
             api = dataclasses.replace(api, base_url=arguments.base_url)
         package_name = arguments.package_name or default_package_name(api.title)
         client_name = arguments.client_name or default_client_name(api.title)
-        files = generate_package(api, client_name=client_name, schema_name=arguments.schema.name)
+        files = generate_package(
+            api,
+            client_name=client_name,
+            schema_name=arguments.schema.name,
+            split_by_tag=arguments.split_by_tag,
+        )
         written = write_package(files, arguments.output / package_name, force=arguments.force)
     except (SchemaError, FileExistsError) as error:
         print(f"action0-openapi: error: {error}", file=sys.stderr)
