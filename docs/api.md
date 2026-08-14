@@ -50,6 +50,13 @@ from action0.openapi import SecurityScheme
    :members:
 ```
 
+## Code emission
+
+```{eval-rst}
+.. automodule:: action0.openapi.render
+   :members:
+```
+
 ## Errors
 
 ```{eval-rst}
