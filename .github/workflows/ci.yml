@@ -57,6 +57,9 @@ jobs:
       - name: pytest
         run: uv run pytest
 
+      - name: CLI smoke test
+        run: uv run action0-openapi tests/action0/openapi/fixtures/petstore.json -o /tmp/generated
+
   docs:
     name: docs build
     runs-on: ubuntu-latest

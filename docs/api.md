@@ -50,6 +50,13 @@ from action0.openapi import SecurityScheme
    :members:
 ```
 
+## Command line interface
+
+```{eval-rst}
+.. automodule:: action0.openapi.cli
+   :members:
+```
+
 ## Package generation
 
 ```{eval-rst}

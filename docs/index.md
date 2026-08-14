@@ -9,8 +9,24 @@ is plain, readable `action0-client` code — it depends on
 on asyncio, on Twisted or on an execution model of your own, decided by
 the backend you plug in.
 
-**Status:** early scaffold — the generator design and implementation are
-in progress; nothing is generated yet.
+```shell
+action0-openapi petstore.json -o src/
+```
+
+```python
+from petstore_client import GetPet, PetstoreClient
+
+client = PetstoreClient(RequestsBackend(), token="...")
+pet = client.send(GetPet(pet_id=42))  # Pet
+
+client = PetstoreClient(AsyncHttpxBackend(), token="...")
+pet = await client.send(GetPet(pet_id=42))  # Awaitable[Pet]
+```
+
+The generated code is meant to be checked in and reviewed like
+hand-written code: readable, ruff-clean, and fully typed — mypy strict,
+pyright and ty pass on it. {doc}`usage/schema-support` lists exactly
+which OpenAPI constructs are covered.
 
 The `action0` namespace is simply the one the author likes to use for
 personal projects.
