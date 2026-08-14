@@ -2,7 +2,11 @@
 """Typed API client for Petstore 1.0.0."""
 
 from .client import PetstoreClient
+from .models import Animal
+from .models import Cat
+from .models import Companion
 from .models import CreateTokenResponse
+from .models import Dog
 from .models import Owner
 from .models import Pet
 from .models import PetStatus
@@ -15,10 +19,14 @@ from .operations import ListPets
 from .operations import ReplacePet
 
 __all__ = [
+    "Animal",
+    "Cat",
+    "Companion",
     "CreatePet",
     "CreateToken",
     "CreateTokenResponse",
     "DeletePet",
+    "Dog",
     "GetPet",
     "GetPetPhoto",
     "ListPets",

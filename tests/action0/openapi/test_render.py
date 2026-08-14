@@ -216,6 +216,7 @@ class GoldenBehaviorTestCase(unittest.TestCase):
                 "owner": {"name": "Simon", "class": "human"},
                 "labels": {"chip": "yes"},
                 "friends": [{"id": 2, "name": "Lassie"}],
+                "companion": {"species": "cat", "name": "Tom", "meow": True},
             }
         )
         self.assertEqual(pet.status, self.namespace["PetStatus"].ON_SALE)
@@ -224,6 +225,21 @@ class GoldenBehaviorTestCase(unittest.TestCase):
         self.assertEqual(pet.labels, {"chip": "yes"})
         self.assertEqual(pet.friends[0].name, "Lassie")
         self.assertIsNone(pet.friends[0].status)
+        self.assertIsInstance(pet.companion, self.namespace["Cat"])
+        self.assertTrue(pet.companion.meow)
+
+    def test_union_dispatch(self) -> None:
+        """
+        Test the discriminated union converter: explicit and implicit
+        tags, and the unknown-tag error.
+        """
+        companion_from_json = self.namespace["companion_from_json"]
+        dog = companion_from_json({"species": "Dog", "name": "Rex", "bark": False})
+        self.assertIsInstance(dog, self.namespace["Dog"])
+        cat = companion_from_json({"species": "cat", "name": "Tom", "meow": True})
+        self.assertIsInstance(cat, self.namespace["Cat"])
+        with self.assertRaisesRegex(ValueError, "no member of Companion"):
+            companion_from_json({"species": "fish", "name": "Nemo"})
 
     def test_missing_optionals_and_nulls(self) -> None:
         """

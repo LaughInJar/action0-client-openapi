@@ -15,6 +15,9 @@ from action0.openapi import Scalar
 from action0.openapi import ScalarType
 from action0.openapi import SchemaError
 from action0.openapi import SecurityKind
+from action0.openapi import UnionCheck
+from action0.openapi import UnionModel
+from action0.openapi import UnionType
 from action0.openapi import load_schema
 from action0.openapi import parse_api
 
@@ -84,7 +87,16 @@ class PetstoreTestCase(unittest.TestCase):
         """
         self.assertEqual(
             [model.name for model in self.api.models],
-            ["PetStatus", "Owner", "Pet", "CreateTokenResponse"],
+            [
+                "PetStatus",
+                "Owner",
+                "Cat",
+                "Dog",
+                "Companion",
+                "Pet",
+                "Animal",
+                "CreateTokenResponse",
+            ],
         )
 
     def test_enum(self) -> None:
@@ -110,7 +122,7 @@ class PetstoreTestCase(unittest.TestCase):
         by_name = {field.name: field for field in pet.fields}
         self.assertEqual(
             [field.name for field in pet.fields],
-            ["id", "name", "status", "born_on", "owner", "labels", "friends"],
+            ["id", "name", "status", "born_on", "owner", "labels", "friends", "companion"],
         )
         self.assertTrue(by_name["id"].required)
         self.assertEqual(by_name["id"].type, ScalarType(Scalar.INT))
@@ -121,6 +133,26 @@ class PetstoreTestCase(unittest.TestCase):
         self.assertEqual(by_name["owner"].type, ModelType("Owner"))
         self.assertEqual(by_name["labels"].type, MapType(ScalarType(Scalar.STR)))
         self.assertEqual(by_name["friends"].type, ArrayType(ModelType("Pet")))
+
+    def test_discriminated_union(self) -> None:
+        """
+        Test the Companion union: explicit mapping tag for Cat, implicit
+        component-name tag for Dog, allOf-flattened members.
+        """
+        union = next(model for model in self.api.models if model.name == "Companion")
+        assert isinstance(union, UnionModel)
+        self.assertEqual(union.description, "A pet's companion animal.")
+        self.assertEqual(union.discriminator, "species")
+        self.assertEqual(union.members, (ModelType("Cat"), ModelType("Dog")))
+        self.assertEqual(
+            [(case.check, case.value) for case in union.cases],
+            [(UnionCheck.TAG, "cat"), (UnionCheck.TAG, "Dog")],
+        )
+        cat = self.model("Cat")
+        self.assertEqual([field.name for field in cat.fields], ["species", "name", "meow"])
+        pet = self.model("Pet")
+        companion = {field.name: field for field in pet.fields}["companion"]
+        self.assertEqual(companion.type, UnionType("Companion", union.members))
 
     def test_keyword_property(self) -> None:
         """
@@ -298,12 +330,128 @@ class EdgeCaseTestCase(unittest.TestCase):
         self.assertTrue(model.fields[0].nullable)
         self.assertEqual(model.fields[0].type, ScalarType(Scalar.STR))
 
-    def test_oneof_union_rejected(self) -> None:
+    def test_scalar_union(self) -> None:
         """
-        Test that a real union is rejected with the location.
+        Test a oneOf of scalars: JSON-type dispatch, no ambiguity.
         """
-        with self.assertRaisesRegex(SchemaError, "components.schemas.Box.*oneOf"):
-            self.parse_component("Box", {"oneOf": [{"type": "string"}, {"type": "integer"}]})
+        api = self.parse_component(
+            "Value", {"oneOf": [{"type": "string"}, {"type": "integer"}, {"type": "boolean"}]}
+        )
+        union = api.models[0]
+        assert isinstance(union, UnionModel)
+        self.assertEqual(union.name, "Value")
+        self.assertEqual(
+            union.members,
+            (ScalarType(Scalar.STR), ScalarType(Scalar.INT), ScalarType(Scalar.BOOL)),
+        )
+        # bool is checked before int (bools are ints in Python)
+        self.assertEqual(
+            [(case.check, case.value) for case in union.cases],
+            [
+                (UnionCheck.JSON_TYPE, "bool"),
+                (UnionCheck.JSON_TYPE, "int"),
+                (UnionCheck.JSON_TYPE, "str"),
+            ],
+        )
+
+    def test_union_by_unique_required_key(self) -> None:
+        """
+        Test object members without a discriminator dispatching on a
+        required key the other member does not declare.
+        """
+        api = parse_api(
+            minimal(
+                components={
+                    "schemas": {
+                        "Either": {
+                            "anyOf": [
+                                {"$ref": "#/components/schemas/A"},
+                                {"$ref": "#/components/schemas/B"},
+                            ]
+                        },
+                        "A": {
+                            "type": "object",
+                            "required": ["a"],
+                            "properties": {"a": {"type": "string"}, "x": {"type": "string"}},
+                        },
+                        "B": {
+                            "type": "object",
+                            "required": ["b"],
+                            "properties": {"b": {"type": "string"}, "x": {"type": "string"}},
+                        },
+                    }
+                }
+            )
+        )
+        union = next(model for model in api.models if model.name == "Either")
+        assert isinstance(union, UnionModel)
+        self.assertIsNone(union.discriminator)
+        self.assertEqual(
+            [(case.check, case.value) for case in union.cases],
+            [(UnionCheck.KEY, "a"), (UnionCheck.KEY, "b")],
+        )
+
+    def test_ambiguous_union_degrades_to_any(self) -> None:
+        """
+        Test that indistinguishable members degrade to Any, warning
+        attached, instead of failing the run.
+        """
+        api = parse_api(
+            minimal(
+                components={
+                    "schemas": {
+                        "Holder": {
+                            "type": "object",
+                            "properties": {
+                                "value": {
+                                    "oneOf": [
+                                        {"type": "object", "properties": {"x": {}}},
+                                        {"type": "object", "properties": {"y": {}}},
+                                    ]
+                                }
+                            },
+                        }
+                    }
+                }
+            )
+        )
+        holder = next(model for model in api.models if model.name == "Holder")
+        assert isinstance(holder, Model)
+        self.assertEqual(holder.fields[0].type, ScalarType(Scalar.ANY))
+        self.assertTrue(any("cannot be told apart" in warning for warning in api.warnings))
+
+    def test_multi_type_array_becomes_union(self) -> None:
+        """
+        Test the 3.1 shorthand: type: [T1, T2, "null"] is a nullable
+        union now, not Any.
+        """
+        api = self.parse_component(
+            "Box",
+            {
+                "type": "object",
+                "required": ["value"],
+                "properties": {"value": {"type": ["string", "integer", "null"]}},
+            },
+        )
+        box = next(model for model in api.models if model.name == "Box")
+        assert isinstance(box, Model)
+        field = box.fields[0]
+        self.assertTrue(field.nullable)
+        assert isinstance(field.type, UnionType)
+        self.assertEqual(field.type.name, "BoxValue")
+        self.assertEqual(field.type.members, (ScalarType(Scalar.STR), ScalarType(Scalar.INT)))
+
+    def test_union_of_two_strings_degrades(self) -> None:
+        """
+        Test that two members in the same JSON-type bucket degrade to
+        Any (a date and a plain string both arrive as strings).
+        """
+        api = self.parse_component(
+            "Value",
+            {"oneOf": [{"type": "string", "format": "date"}, {"type": "string"}]},
+        )
+        self.assertEqual(api.models, ())
+        self.assertTrue(any("cannot be told apart" in warning for warning in api.warnings))
 
     def test_allof_single_unwraps(self) -> None:
         """

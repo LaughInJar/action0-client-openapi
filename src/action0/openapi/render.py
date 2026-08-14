@@ -34,6 +34,10 @@ from .ir import ScalarType
 from .ir import SecurityKind
 from .ir import SecurityScheme
 from .ir import TypeExpr
+from .ir import UnionCase
+from .ir import UnionCheck
+from .ir import UnionModel
+from .ir import UnionType
 from .names import converter_name
 from .types import annotation
 from .types import converter_expr
@@ -200,6 +204,8 @@ def render_models(api: Api, header: str) -> str:
         body.separate()
         if isinstance(model, EnumModel):
             _render_enum(model, body, imports)
+        elif isinstance(model, UnionModel):
+            _render_union(model, body, imports)
         else:
             _render_model(model, body, imports)
             body.separate()
@@ -226,6 +232,78 @@ def _render_enum(model: EnumModel, lines: Lines, imports: Imports) -> None:
     for member, value in model.members:
         lines.write(f"{member} = {_literal(value)}")
     lines.dedent()
+
+
+#: the isinstance() argument of each JSON-type dispatch bucket; float
+#: accepts ints too — JSON numbers decode as either
+_ISINSTANCE_ARGS = {
+    "bool": "bool",
+    "int": "int",
+    "float": "(int, float)",
+    "str": "str",
+    "list": "list",
+    "dict": "dict",
+}
+
+
+def _render_union(model: UnionModel, lines: Lines, imports: Imports) -> None:
+    """
+    Render one union: the type alias and, when any member needs
+    converting, the dispatching converter function.
+
+    :param model: the union
+    :param lines: the module builder
+    :param imports: the module's import collector
+    """
+    imports.add("from typing import TypeAlias")
+    for member in model.members:
+        imports.add(*imports_for(member))
+    if model.description:
+        lines.write(f"#: {model.description}")
+    alias = " | ".join(annotation(member) for member in model.members)
+    # the string form keeps the alias independent of definition order
+    lines.write(f'{model.name}: TypeAlias = "{alias}"')
+    if not needs_conversion(UnionType(model.name, model.members)):
+        return
+    imports.add("from typing import Any")
+    lines.separate()
+    lines.write(f"def {converter_name(model.name)}(data: Any) -> {model.name}:")
+    lines.indent()
+    lines.docstring(
+        f"Build a :py:data:`{model.name}` member from one decoded JSON value.\n"
+        "\n"
+        ":param data: the decoded JSON value\n"
+        ":return: the matching member\n"
+        ":raises ValueError: if the value matches no member"
+    )
+    # object checks only need the isinstance guard when non-object
+    # payloads can reach them
+    guarded = any(case.check is UnionCheck.JSON_TYPE for case in model.cases)
+    for case in model.cases:
+        lines.write(f"if {_union_condition(case, model.discriminator, guarded)}:")
+        lines.indent()
+        lines.write(f"return {converter_expr(case.member, 'data')}")
+        lines.dedent()
+    lines.write(f'raise ValueError("the payload matches no member of {model.name}")')
+    lines.dedent()
+
+
+def _union_condition(case: UnionCase, discriminator: str | None, guarded: bool) -> str:
+    """
+    Render the condition recognizing one union member.
+
+    :param case: the dispatch branch
+    :param discriminator: the wire property carrying the tag
+    :param guarded: whether object checks need an isinstance(dict) guard
+    :return: the condition text
+    """
+    if case.check is UnionCheck.JSON_TYPE:
+        return f"isinstance(data, {_ISINSTANCE_ARGS[case.value]})"
+    if case.check is UnionCheck.TAG:
+        condition = f"data.get({_literal(discriminator)}) == {_literal(case.value)}"
+    else:
+        condition = f"{_literal(case.value)} in data"
+    return f"isinstance(data, dict) and {condition}" if guarded else condition
 
 
 def _render_model(model: Model, lines: Lines, imports: Imports) -> None:
@@ -591,7 +669,7 @@ def _import_classes(t: TypeExpr, imports: Imports) -> None:
     :param imports: the module's import collector
     """
     match t:
-        case ModelType(name=name) | EnumType(name=name):
+        case ModelType(name=name) | EnumType(name=name) | UnionType(name=name):
             imports.add(f"from .models import {name}")
         case ArrayType(item=inner) | MapType(value=inner):
             _import_classes(inner, imports)
@@ -609,6 +687,9 @@ def _import_converters(t: TypeExpr, imports: Imports) -> None:
     match t:
         case ModelType(name=name):
             imports.add(f"from .models import {converter_name(name)}")
+        case UnionType(name=name) as union:
+            if needs_conversion(union):
+                imports.add(f"from .models import {converter_name(name)}")
         case ArrayType(item=inner) | MapType(value=inner):
             _import_converters(inner, imports)
         case ScalarType() | EnumType():

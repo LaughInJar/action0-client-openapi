@@ -76,8 +76,24 @@ class EnumType:
     name: str
 
 
+@dataclass(frozen=True)
+class UnionType:
+    """
+    A reference to a generated union alias, by Python name.
+
+    The members ride along so the type logic (annotations, whether a
+    conversion is needed at all) works without looking the union up.
+
+    :param name: the alias name
+    :param members: the union's member types, in schema order
+    """
+
+    name: str
+    members: tuple[TypeExpr, ...]
+
+
 #: any type generated code can express
-TypeExpr: TypeAlias = "ScalarType | ArrayType | MapType | ModelType | EnumType"
+TypeExpr: TypeAlias = "ScalarType | ArrayType | MapType | ModelType | EnumType | UnionType"
 
 
 @dataclass(frozen=True)
@@ -134,6 +150,55 @@ class EnumModel:
     name: str
     base: Scalar
     members: tuple[tuple[str, str | int], ...]
+    description: str | None = None
+
+
+class UnionCheck(enum.Enum):
+    """How one union member is recognized in a decoded payload."""
+
+    #: an ``isinstance`` check against a JSON-level Python type
+    JSON_TYPE = "json-type"
+    #: the discriminator property equals a tag value
+    TAG = "tag"
+    #: a required key only this member has is present
+    KEY = "key"
+
+
+@dataclass(frozen=True)
+class UnionCase:
+    """
+    One branch of a union's dispatching converter.
+
+    :param member: the member built when the check matches
+    :param check: how the member is recognized
+    :param value: the check's argument — the Python type name (e.g.
+        ``str``, ``(int, float)``) for :py:attr:`UnionCheck.JSON_TYPE`,
+        the tag value for :py:attr:`UnionCheck.TAG`, the property name
+        for :py:attr:`UnionCheck.KEY`
+    """
+
+    member: TypeExpr
+    check: UnionCheck
+    value: str
+
+
+@dataclass(frozen=True)
+class UnionModel:
+    """
+    One generated union: a type alias plus a dispatching converter.
+
+    :param name: the Python alias name
+    :param members: the member types, in schema order
+    :param cases: the dispatch branches, in the order they are emitted
+    :param discriminator: the wire property carrying the tag (for
+        :py:attr:`UnionCheck.TAG` cases)
+    :param description: the schema's description, for the docstring
+    """
+
+    name: str
+    members: tuple[TypeExpr, ...]
+    cases: tuple[UnionCase, ...]
+    discriminator: str | None = None
     description: str | None = None
 
 
@@ -289,7 +354,7 @@ class Api:
     title: str
     version: str
     base_url: str | None = None
-    models: tuple[Model | EnumModel, ...] = field(default=())
+    models: tuple[Model | EnumModel | UnionModel, ...] = field(default=())
     operations: tuple[OperationIR, ...] = field(default=())
     security: tuple[SecurityScheme, ...] = field(default=())
     warnings: tuple[str, ...] = field(default=())

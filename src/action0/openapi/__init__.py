@@ -40,6 +40,10 @@ from .ir import ScalarType
 from .ir import SecurityKind
 from .ir import SecurityScheme
 from .ir import TypeExpr
+from .ir import UnionCase
+from .ir import UnionCheck
+from .ir import UnionModel
+from .ir import UnionType
 from .loader import load_schema
 from .parse import parse_api
 from .resolve import RefResolver
@@ -68,6 +72,10 @@ __all__ = [
     "SecurityKind",
     "SecurityScheme",
     "TypeExpr",
+    "UnionCase",
+    "UnionCheck",
+    "UnionModel",
+    "UnionType",
     "default_client_name",
     "default_package_name",
     "generate_package",

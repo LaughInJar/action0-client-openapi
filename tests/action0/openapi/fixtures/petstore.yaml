@@ -178,6 +178,45 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Pet'
+        companion:
+          $ref: '#/components/schemas/Companion'
+    Companion:
+      description: A pet's companion animal.
+      oneOf:
+      - $ref: '#/components/schemas/Cat'
+      - $ref: '#/components/schemas/Dog'
+      discriminator:
+        propertyName: species
+        mapping:
+          cat: '#/components/schemas/Cat'
+    Cat:
+      allOf:
+      - $ref: '#/components/schemas/Animal'
+      - type: object
+        required:
+        - meow
+        properties:
+          meow:
+            type: boolean
+    Dog:
+      allOf:
+      - $ref: '#/components/schemas/Animal'
+      - type: object
+        required:
+        - bark
+        properties:
+          bark:
+            type: boolean
+    Animal:
+      type: object
+      required:
+      - species
+      - name
+      properties:
+        species:
+          type: string
+        name:
+          type: string
     PetStatus:
       type: string
       description: The pet's sale status.

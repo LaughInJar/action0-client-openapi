@@ -20,6 +20,7 @@ from .ir import ModelType
 from .ir import Scalar
 from .ir import ScalarType
 from .ir import TypeExpr
+from .ir import UnionType
 from .names import converter_name
 
 #: schema "format" values that refine a "string" into a richer type;
@@ -107,7 +108,7 @@ def annotation(t: TypeExpr, *, optional: bool = False) -> str:
             rendered = f"list[{annotation(item)}]"
         case MapType(value=value):
             rendered = f"dict[str, {annotation(value)}]"
-        case ModelType(name=name) | EnumType(name=name):
+        case ModelType(name=name) | EnumType(name=name) | UnionType(name=name):
             rendered = name
     return f"{rendered} | None" if optional else rendered
 
@@ -131,7 +132,7 @@ def imports_for(t: TypeExpr) -> frozenset[str]:
             return frozenset([statement] if statement else [])
         case ArrayType(item=inner) | MapType(value=inner):
             return imports_for(inner)
-        case ModelType() | EnumType():
+        case ModelType() | EnumType() | UnionType():
             return frozenset()
 
 
@@ -158,6 +159,10 @@ def needs_conversion(t: TypeExpr) -> bool:
             return needs_conversion(inner)
         case ModelType() | EnumType():
             return True
+        case UnionType(members=members):
+            # a union of decoder-ready members needs no dispatcher —
+            # whatever came out of the decoder already is the value
+            return any(needs_conversion(member) for member in members)
 
 
 def converter_expr(t: TypeExpr, source: str, *, _depth: int = 0) -> str:
@@ -189,7 +194,7 @@ def converter_expr(t: TypeExpr, source: str, *, _depth: int = 0) -> str:
             return f"uuid.UUID({source})"
         case EnumType(name=name):
             return f"{name}({source})"
-        case ModelType(name=name):
+        case ModelType(name=name) | UnionType(name=name):
             return f"{converter_name(name)}({source})"
         case ArrayType(item=item):
             var = "item" if _depth == 0 else f"item{_depth}"
