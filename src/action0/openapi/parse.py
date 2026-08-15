@@ -840,6 +840,24 @@ class _Parser:
                 f" placeholders {sorted(set(placeholders))}"
             )
         body = self._parse_body(name, operation.get("requestBody"), field_names, where=where)
+        if body is not None and body.kind is BodyKind.RAW_BODY:
+            # a raw body ships its media type as an overridable header
+            # field — action0-client's body() sends the bytes verbatim
+            # and leaves the Content-Type to the operation
+            assert body.media_type is not None
+            params.append(
+                Param(
+                    name=field_names.claim(
+                        field_name("Content-Type", reserved=RESERVED_OPERATION_FIELDS)
+                    ),
+                    wire_name="Content-Type",
+                    location=ParamLocation.HEADER,
+                    type=ScalarType(Scalar.STR),
+                    required=False,
+                    default=body.media_type,
+                    description="The request body's media type.",
+                )
+            )
         response_kind, response_type = self._parse_responses(name, operation, where=where)
         self._operations.append(
             OperationIR(
@@ -962,10 +980,17 @@ class _Parser:
             return self._form_body(
                 operation_name, schema, required, field_names, where=f"{where}.requestBody"
             )
-        raise SchemaError(
-            f"{where}: no supported request media type in {sorted(content)}"
-            " (application/json and application/x-www-form-urlencoded are)"
-        )
+        if not content:
+            raise SchemaError(f"{where}.requestBody: the content declares no media type")
+        # any other media type (file uploads and the like) is sent raw:
+        # a bytes payload plus a Content-Type header preset to the type
+        media_type, *ignored = content
+        if ignored:
+            self._warnings.append(
+                f"{where}.requestBody: several media types — the payload is sent"
+                f" as {media_type}; ignored: {', '.join(ignored)}"
+            )
+        return self._raw_body(media_type, required, field_names)
 
     def _json_media_type(self, content: Mapping[str, Any]) -> str | None:
         """
@@ -1105,6 +1130,32 @@ class _Parser:
                 )
             )
         return Body(kind=BodyKind.FORM_FIELDS, fields=tuple(fields), required=required)
+
+    def _raw_body(self, media_type: str, required: bool, field_names: NameRegistry) -> Body:
+        """
+        Translate a request body of any non-JSON, non-form media type.
+
+        The media type's schema (usually ``type: string`` with
+        ``format: binary``) is not translated: the payload is sent as
+        the raw request body, and the caller adds a ``content_type``
+        header parameter carrying the media type.
+
+        :param media_type: the media type
+        :param required: whether the request must carry the body
+        :param field_names: the operation's field name scope
+        :return: the body
+        """
+        name = field_names.claim(field_name("payload", reserved=RESERVED_OPERATION_FIELDS))
+        field = Field(
+            name=name,
+            wire_name=name,
+            type=ScalarType(Scalar.BYTES),
+            required=required,
+            nullable=not required,
+        )
+        return Body(
+            kind=BodyKind.RAW_BODY, fields=(field,), required=required, media_type=media_type
+        )
 
     def _parse_responses(
         self, operation_name: str, operation: Mapping[str, Any], *, where: str

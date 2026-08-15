@@ -62,6 +62,7 @@ operations get a trailing underscore.
 | JSON request body, inline object schema | one `json_field()` per property |
 | JSON request body, `$ref`/array/scalar schema | a single `payload: ... = json_body()` field |
 | `application/x-www-form-urlencoded` body | one `form_field()` per property (scalars, enums, arrays of those) |
+| any other request media type (file uploads: `application/octet-stream`, `image/*`, ...) | a raw `payload: bytes = body()` field, plus a `content_type` header field preset to the media type (several raw media types: the first is sent, with a warning) |
 | lowest documented 2xx response with JSON content | the operation's typed result |
 | `204` (or 2xx without content) | `Operation[None]` |
 | 2xx with only non-JSON content | `Operation[bytes]` |

@@ -582,6 +582,12 @@ def _render_body_fields(
             lines.comment(field.description)
         lines.write(_field_line(field, "json_body", None, enum_members, imports))
         return
+    if body.kind is BodyKind.RAW_BODY:
+        (field,) = body.fields
+        if field.description:
+            lines.comment(field.description)
+        lines.write(_field_line(field, "body", None, enum_members, imports))
+        return
     specifier = "json_field" if body.kind is BodyKind.JSON_FIELDS else "form_field"
     for field in body.fields:
         rename = field.wire_name if field.wire_name != field.name else None

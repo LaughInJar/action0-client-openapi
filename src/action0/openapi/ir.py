@@ -246,6 +246,8 @@ class BodyKind(enum.Enum):
     JSON_BODY = "json-body"
     #: ``application/x-www-form-urlencoded``, one ``form_field()`` per property
     FORM_FIELDS = "form-fields"
+    #: any other media type, one raw-bytes ``body()`` field
+    RAW_BODY = "raw-body"
 
 
 @dataclass(frozen=True)
@@ -255,16 +257,21 @@ class Body:
 
     :param kind: how the body maps to operation fields
     :param fields: the properties (for :py:attr:`BodyKind.JSON_FIELDS`
-        and :py:attr:`BodyKind.FORM_FIELDS`; empty otherwise)
+        and :py:attr:`BodyKind.FORM_FIELDS`), or the single payload
+        field (:py:attr:`BodyKind.JSON_BODY` and
+        :py:attr:`BodyKind.RAW_BODY`)
     :param type: the whole-body type (for :py:attr:`BodyKind.JSON_BODY`;
         ``None`` otherwise)
     :param required: whether the request must carry the body
+    :param media_type: the media type sent as ``Content-Type`` (for
+        :py:attr:`BodyKind.RAW_BODY`; ``None`` otherwise)
     """
 
     kind: BodyKind
     fields: tuple[Field, ...] = ()
     type: TypeExpr | None = None
     required: bool = True
+    media_type: str | None = None
 
 
 class ResponseKind(enum.Enum):

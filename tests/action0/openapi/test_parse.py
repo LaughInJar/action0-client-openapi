@@ -193,6 +193,7 @@ class PetstoreTestCase(unittest.TestCase):
                 "GetPet",
                 "ReplacePet",
                 "DeletePet",
+                "UploadPetPhoto",
                 "GetPetPhoto",
                 "CreateToken",
             ],
@@ -268,6 +269,21 @@ class PetstoreTestCase(unittest.TestCase):
         by_name = {field.name: field for field in body.fields}
         self.assertTrue(by_name["grant_type"].required)
         self.assertFalse(by_name["scope"].required)
+
+    def test_raw_body(self) -> None:
+        """
+        Test UploadPetPhoto: an image/png body becomes a raw bytes
+        payload with a preset Content-Type header parameter.
+        """
+        operation = self.operation("UploadPetPhoto")
+        self.assertEqual(operation.body.kind, BodyKind.RAW_BODY)
+        self.assertEqual(operation.body.media_type, "image/png")
+        (payload,) = operation.body.fields
+        self.assertEqual(payload.type, ScalarType(Scalar.BYTES))
+        self.assertTrue(payload.required)
+        by_name = {param.name: param for param in operation.params}
+        self.assertEqual(by_name["content_type"].wire_name, "Content-Type")
+        self.assertEqual(by_name["content_type"].default, "image/png")
 
     def test_no_content_response(self) -> None:
         """
@@ -802,14 +818,65 @@ class EdgeCaseTestCase(unittest.TestCase):
         with self.assertRaisesRegex(SchemaError, "placeholders"):
             parse_api(document)
 
-    def test_unsupported_media_type_rejected(self) -> None:
+    def test_raw_media_type_body(self) -> None:
         """
-        Test that a body without JSON or form content is rejected.
+        Test that a body without JSON or form content becomes a raw
+        bytes payload plus a Content-Type header parameter.
         """
         document = self.operation_document(
-            {"requestBody": {"content": {"application/xml": {"schema": {}}}}}
+            {
+                "requestBody": {
+                    "required": True,
+                    "content": {"application/xml": {"schema": {}}},
+                },
+                "responses": {},
+            }
         )
-        with self.assertRaisesRegex(SchemaError, "application/xml"):
+        operation = parse_api(document).operations[0]
+        assert operation.body is not None
+        self.assertEqual(operation.body.kind, BodyKind.RAW_BODY)
+        self.assertEqual(operation.body.media_type, "application/xml")
+        (payload,) = operation.body.fields
+        self.assertEqual(payload.name, "payload")
+        self.assertEqual(payload.type, ScalarType(Scalar.BYTES))
+        self.assertTrue(payload.required)
+        (content_type,) = operation.params
+        self.assertEqual(content_type.name, "content_type")
+        self.assertEqual(content_type.wire_name, "Content-Type")
+        self.assertEqual(content_type.location, ParamLocation.HEADER)
+        self.assertFalse(content_type.required)
+        self.assertEqual(content_type.default, "application/xml")
+
+    def test_raw_body_media_type_choice_warns(self) -> None:
+        """
+        Test that with several raw media types the first is sent and
+        the rest are reported.
+        """
+        document = self.operation_document(
+            {
+                "requestBody": {
+                    "content": {"image/png": {}, "image/jpeg": {}},
+                },
+                "responses": {},
+            }
+        )
+        api = parse_api(document)
+        assert api.operations[0].body is not None
+        self.assertEqual(api.operations[0].body.media_type, "image/png")
+        self.assertEqual(
+            [warning for warning in api.warnings if "media types" in warning],
+            [
+                "paths./things.get.requestBody: several media types — the payload"
+                " is sent as image/png; ignored: image/jpeg"
+            ],
+        )
+
+    def test_empty_request_content_rejected(self) -> None:
+        """
+        Test that a requestBody without any media type is rejected.
+        """
+        document = self.operation_document({"requestBody": {"content": {}}, "responses": {}})
+        with self.assertRaisesRegex(SchemaError, "no media type"):
             parse_api(document)
 
     def test_reserved_operation_field_names(self) -> None:
