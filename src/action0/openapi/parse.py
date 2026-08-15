@@ -738,8 +738,11 @@ class _Parser:
                 )
             )
         # plain (non-kw_only) dataclasses need default-less fields first;
-        # the sort is stable, so schema order survives within the groups
-        fields.sort(key=lambda field: not field.required)
+        # a field is rendered with a default exactly when it is optional
+        # (not required, or nullable — those get ``= None``), so that is
+        # the sort predicate; the sort is stable, so schema order
+        # survives within the groups
+        fields.sort(key=lambda field: not field.required or field.nullable)
         self._models.append(
             Model(name=name, fields=tuple(fields), description=node.get("description"))
         )

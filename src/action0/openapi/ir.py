@@ -126,7 +126,8 @@ class Model:
     One generated dataclass model.
 
     :param name: the Python class name
-    :param fields: the model's fields, required ones first
+    :param fields: the model's fields; the ones rendered without a
+        dataclass default (required and not nullable) come first
     :param description: the schema's description, for the docstring
     """
 

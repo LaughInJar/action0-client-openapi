@@ -257,6 +257,22 @@ components:
           type: string
         class:
           type: string
+    HealthRecord:
+      type: object
+      description: One veterinary examination of a pet.
+      required:
+      - examinedOn
+      - clinic
+      properties:
+        examinedOn:
+          type: string
+          format: date
+          nullable: true
+          description: The day of the examination. Null when it is not recorded.
+        clinic:
+          type: string
+        notes:
+          type: string
   securitySchemes:
     BearerAuth:
       type: http
