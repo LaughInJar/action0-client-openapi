@@ -52,7 +52,7 @@ from .loader import load_schema
 from .parse import parse_api
 from .resolve import RefResolver
 
-__version__: str = "0.1.0"
+__version__: str = "0.1.1"
 
 __all__ = [
     "Api",
