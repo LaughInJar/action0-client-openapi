@@ -17,7 +17,12 @@ src/petstore_client/py.typed
 The package name (`petstore_client`) and the client class name
 (`PetstoreClient`) are derived from the schema's `info.title`; the
 client's default base URL comes from the schema's first `servers`
-entry. All of it can be overridden:
+entry (server variables at their defaults). A document without
+top-level `servers` falls back to the `servers` declared on its paths
+and operations — Open-Meteo's specs are shaped like that — as long as
+they all agree on their first URL; several distinct URLs leave the
+client without a default (a warning names them), so callers pass
+`base_url` themselves. All of it can be overridden:
 
 ```shell
 action0-openapi petstore.yaml -o src/ \
