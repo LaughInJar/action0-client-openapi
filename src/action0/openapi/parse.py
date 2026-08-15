@@ -188,13 +188,55 @@ class _Parser:
         The default base URL: the first server, variables at their
         defaults.
 
-        :return: the URL, or ``None`` when the document names no servers
+        Documents without top-level ``servers`` (Open-Meteo declares
+        them per path) fall back to the path items' and operations'
+        ``servers`` — usable as a default when they all agree on their
+        first URL. Several distinct URLs cannot pick a default: the
+        client requires ``base_url`` then, and a warning names the
+        candidates.
+
+        :return: the URL, or ``None`` when the document names no
+            (single) server
         """
         servers = self._document.get("servers") or []
-        if not servers:
+        if servers:
+            return self._server_url(servers[0])
+        urls: list[str] = []
+        for path_item in (self._document.get("paths") or {}).values():
+            if not isinstance(path_item, Mapping):
+                continue
+            path_item = self._resolver.deref(path_item)
+            declared = [path_item.get("servers")]
+            for method in _METHODS:
+                operation = path_item.get(method)
+                if isinstance(operation, Mapping):
+                    declared.append(operation.get("servers"))
+            for candidates in declared:
+                if not candidates:
+                    continue
+                url = self._server_url(candidates[0])
+                if url is not None and url not in urls:
+                    urls.append(url)
+        if len(urls) > 1:
+            self._warnings.append(
+                "paths declare several distinct server URLs"
+                f" ({', '.join(urls)}) — the generated client has no default"
+                " base URL; pass one explicitly (--base-url)"
+            )
             return None
-        url = str(servers[0].get("url", ""))
-        for name, variable in (servers[0].get("variables") or {}).items():
+        return urls[0] if urls else None
+
+    def _server_url(self, server: Any) -> str | None:
+        """
+        The URL of one ``servers`` entry, variables at their defaults.
+
+        :param server: the server node
+        :return: the URL, or ``None`` when the entry has none
+        """
+        if not isinstance(server, Mapping):
+            return None
+        url = str(server.get("url", ""))
+        for name, variable in (server.get("variables") or {}).items():
             url = url.replace("{" + name + "}", str(variable.get("default", "")))
         return url or None
 

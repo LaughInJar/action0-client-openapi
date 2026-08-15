@@ -340,6 +340,129 @@ class PetstoreTestCase(unittest.TestCase):
         self.assertTrue(any("LegacyOAuth" in warning for warning in self.api.warnings))
 
 
+class ServerFallbackTestCase(unittest.TestCase):
+    """
+    tests for the path/operation-level ``servers`` fallback of the
+    default base URL
+    """
+
+    def operation(self) -> dict[str, Any]:
+        """
+        Build a minimal operation node.
+
+        :return: the operation
+        """
+        return {"operationId": "getThing", "responses": {"204": {"description": "ok"}}}
+
+    def test_path_level_servers(self) -> None:
+        """
+        Test that path-level servers (the Open-Meteo shape) provide the
+        default base URL — the first entry wins.
+        """
+        api = parse_api(
+            minimal(
+                paths={
+                    "/v1/forecast": {
+                        "servers": [
+                            {"url": "https://api.open-meteo.com"},
+                            {"url": "https://customer-api.open-meteo.com"},
+                        ],
+                        "get": self.operation(),
+                    }
+                }
+            )
+        )
+        self.assertEqual(api.base_url, "https://api.open-meteo.com")
+        self.assertEqual(api.warnings, ())
+
+    def test_operation_level_servers_and_variables(self) -> None:
+        """
+        Test that operation-level servers count too, with their
+        variables substituted at the defaults.
+        """
+        operation = self.operation()
+        operation["servers"] = [
+            {"url": "https://{region}.example.com", "variables": {"region": {"default": "eu"}}}
+        ]
+        api = parse_api(minimal(paths={"/things": {"get": operation}}))
+        self.assertEqual(api.base_url, "https://eu.example.com")
+
+    def test_top_level_servers_take_precedence(self) -> None:
+        """
+        Test that top-level servers win over path-level ones.
+        """
+        api = parse_api(
+            minimal(
+                servers=[{"url": "https://top.example.com"}],
+                paths={
+                    "/things": {
+                        "servers": [{"url": "https://path.example.com"}],
+                        "get": self.operation(),
+                    }
+                },
+            )
+        )
+        self.assertEqual(api.base_url, "https://top.example.com")
+
+    def test_agreeing_paths_share_the_url(self) -> None:
+        """
+        Test that several paths declaring the same first URL agree on
+        the default.
+        """
+        api = parse_api(
+            minimal(
+                paths={
+                    "/a": {
+                        "servers": [{"url": "https://api.example.com"}],
+                        "get": self.operation(),
+                    },
+                    "/b": {
+                        "servers": [{"url": "https://api.example.com"}],
+                        "get": {**self.operation(), "operationId": "getOther"},
+                    },
+                }
+            )
+        )
+        self.assertEqual(api.base_url, "https://api.example.com")
+
+    def test_distinct_urls_leave_no_default_and_warn(self) -> None:
+        """
+        Test that paths disagreeing on their first URL produce no
+        default base URL, with a warning naming the candidates.
+        """
+        api = parse_api(
+            minimal(
+                paths={
+                    "/a": {
+                        "servers": [{"url": "https://one.example.com"}],
+                        "get": self.operation(),
+                    },
+                    "/b": {
+                        "servers": [{"url": "https://two.example.com"}],
+                        "get": {**self.operation(), "operationId": "getOther"},
+                    },
+                }
+            )
+        )
+        self.assertIsNone(api.base_url)
+        self.assertEqual(
+            [warning for warning in api.warnings if "server URLs" in warning],
+            [
+                "paths declare several distinct server URLs"
+                " (https://one.example.com, https://two.example.com) — the generated"
+                " client has no default base URL; pass one explicitly (--base-url)"
+            ],
+        )
+
+    def test_no_servers_anywhere(self) -> None:
+        """
+        Test that a document without any servers has no base URL.
+        """
+        api = parse_api(minimal(paths={"/things": {"get": self.operation()}}))
+        self.assertIsNone(api.base_url)
+        self.assertEqual(api.warnings, ())
+
+
 class EdgeCaseTestCase(unittest.TestCase):
     """
     tests for the translation of individual constructs
