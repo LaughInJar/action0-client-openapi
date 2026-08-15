@@ -18,6 +18,7 @@ from .operations import GetPet
 from .operations import GetPetPhoto
 from .operations import ListPets
 from .operations import ReplacePet
+from .operations import UploadPetPhoto
 
 __all__ = [
     "Animal",
@@ -37,4 +38,5 @@ __all__ = [
     "PetStatus",
     "PetstoreClient",
     "ReplacePet",
+    "UploadPetPhoto",
 ]

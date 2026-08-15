@@ -7,6 +7,7 @@ from typing import Any
 
 from action0.client import JsonOperation
 from action0.client import Operation
+from action0.client import body
 from action0.client import form_field
 from action0.client import header
 from action0.client import json_body
@@ -107,6 +108,26 @@ class DeletePet(Operation[None]):
 
     #: The identifier of the pet to operate on.
     pet_id: int = path_param()
+
+    def load(self, response: Response) -> None:
+        """
+        :param response: the checked response
+        :return: the parsed result
+        """
+        return None
+
+
+class UploadPetPhoto(Operation[None]):
+    """``PUT /pets/{petId}/photo``"""
+
+    method = Method.PUT
+    path = "/pets/{pet_id}/photo"
+    # the schema spells the path "/pets/{petId}/photo"
+
+    pet_id: int = path_param()
+    #: The request body's media type.
+    content_type: str = header("Content-Type", default="image/png")
+    payload: bytes = body()
 
     def load(self, response: Response) -> None:
         """

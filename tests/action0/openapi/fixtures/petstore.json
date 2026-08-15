@@ -187,6 +187,35 @@
             }
         },
         "/pets/{petId}/photo": {
+            "put": {
+                "operationId": "uploadPetPhoto",
+                "parameters": [
+                    {
+                        "name": "petId",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "image/png": {
+                            "schema": {
+                                "type": "string",
+                                "format": "binary"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "204": {
+                        "description": "photo stored"
+                    }
+                }
+            },
             "get": {
                 "operationId": "getPetPhoto",
                 "parameters": [

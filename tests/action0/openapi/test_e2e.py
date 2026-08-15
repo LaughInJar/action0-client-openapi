@@ -120,6 +120,23 @@ class EndToEndTestCase(unittest.TestCase):
         self.assertEqual(request.body_str(), "grant_type=client_credentials")
         self.assertEqual(token.access_token, "at")
 
+    def test_raw_body(self) -> None:
+        """
+        Test UploadPetPhoto: the bytes payload goes out verbatim with
+        the preset Content-Type header, which stays overridable.
+        """
+        client = self.client(Response(204), Response(204))
+        self.assertIsNone(client.send(self.petstore.UploadPetPhoto(pet_id=7, payload=b"\x89PNG")))
+        request = client.backend.requests[0]
+        self.assertEqual(request.method, "PUT")
+        self.assertEqual(request.url.path, "/v1/pets/7/photo")
+        self.assertEqual(request.headers.get("Content-Type"), "image/png")
+        self.assertEqual(request.body_bytes(), b"\x89PNG")
+        client.send(
+            self.petstore.UploadPetPhoto(pet_id=7, payload=b"BM6", content_type="image/bmp")
+        )
+        self.assertEqual(client.backend.requests[1].headers.get("Content-Type"), "image/bmp")
+
     def test_no_content(self) -> None:
         """
         Test DeletePet: 204 parses into None.
