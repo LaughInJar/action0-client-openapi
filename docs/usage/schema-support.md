@@ -71,6 +71,8 @@ operations get a trailing underscore.
 | Schema | Generated Python |
 |---|---|
 | path / query / header parameters | `path_param()` / `query()` / `header()` fields |
+| array query parameter, exploded (the default: `style: form` without `explode: false`) | one `key=value` pair per item — action0-client's own list serialization |
+| array query parameter with `explode: false` (styles `form`, `spaceDelimited`, `pipeDelimited`) | the items join into one `key=value` pair with the style's separator, via a generated `serialize=` lambda (enums join their values, dates ISO 8601, booleans `true`/`false`); `deepObject` and unjoinable item types fall back to exploded pairs, with a warning |
 | parameter with `type`/`enum` directly on the parameter instead of under `schema:` (a Swagger 2.0 habit some specs keep) | those keywords are treated as the parameter's schema, with a warning |
 | required parameter / property | field without default |
 | optional parameter / property | `... \| None = None` (scalar schema `default`s are kept) |

@@ -27,6 +27,7 @@ paths:
           default: 20
       - name: tags
         in: query
+        explode: false
         schema:
           type: array
           items:

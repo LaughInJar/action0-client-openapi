@@ -8,11 +8,15 @@ from pathlib import Path
 from typing import Any
 
 from action0.openapi import Api
+from action0.openapi import ArrayType
 from action0.openapi import EnumModel
+from action0.openapi import EnumType
 from action0.openapi import Field
 from action0.openapi import MapType
 from action0.openapi import Model
 from action0.openapi import OperationIR
+from action0.openapi import Param
+from action0.openapi import ParamLocation
 from action0.openapi import ResponseKind
 from action0.openapi import Scalar
 from action0.openapi import ScalarType
@@ -291,6 +295,85 @@ class RenderOperationsTestCase(unittest.TestCase):
         text = self.operation_module(ScalarType(Scalar.ANY))
         self.assertIn("        return data\n", text)
         self.assertNotIn("cast", text)
+
+
+class JoinedParameterRenderTestCase(unittest.TestCase):
+    """
+    tests for the ``serialize=`` join expressions of non-exploded array
+    parameters
+    """
+
+    def module_text(self, item: Any, join_with: str = ",") -> str:
+        """
+        Render one operation with one joined array parameter.
+
+        :param item: the array's item type
+        :param join_with: the separator
+        :return: the rendered operations module (an over-long field
+            wraps, so assertions search the whole text)
+        """
+        api = Api(
+            title="T",
+            version="1",
+            models=(EnumModel(name="Color", base=Scalar.STR, members=(("RED", "red"),)),),
+            operations=(
+                OperationIR(
+                    class_name="ListThings",
+                    method="GET",
+                    path_template="/things",
+                    wire_path="/things",
+                    params=(
+                        Param(
+                            name="values",
+                            wire_name="values",
+                            location=ParamLocation.QUERY,
+                            type=ArrayType(item),
+                            required=False,
+                            join_with=join_with,
+                        ),
+                    ),
+                ),
+            ),
+        )
+        return render_operations(api, "h")
+
+    def test_join_expressions(self) -> None:
+        """
+        Test the item expression per joinable type, and the separator.
+        """
+        join = "serialize=lambda values:"
+        cases = [
+            (ScalarType(Scalar.STR), ",", f'{join} ",".join(values)'),
+            (ScalarType(Scalar.STR), "|", f'{join} "|".join(values)'),
+            (
+                ScalarType(Scalar.INT),
+                ",",
+                f'{join} ",".join(str(item) for item in values)',
+            ),
+            (
+                ScalarType(Scalar.BOOL),
+                ",",
+                f'{join} ",".join("true" if item else "false" for item in values)',
+            ),
+            (
+                ScalarType(Scalar.DATE),
+                ",",
+                f'{join} ",".join(item.isoformat() for item in values)',
+            ),
+            (
+                ScalarType(Scalar.UUID),
+                ",",
+                f'{join} ",".join(str(item) for item in values)',
+            ),
+            (
+                EnumType("Color"),
+                " ",
+                f'{join} " ".join(str(item.value) for item in values)',
+            ),
+        ]
+        for item, separator, expected in cases:
+            with self.subTest(item=item, separator=separator):
+                self.assertIn(expected, self.module_text(item, separator))
 
 
 class GoldenBehaviorTestCase(unittest.TestCase):

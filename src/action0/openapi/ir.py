@@ -231,6 +231,9 @@ class Param:
     :param nullable: whether the schema allows ``null``
     :param default: the schema's default value (scalars only), or
         ``None`` when the schema declares none
+    :param join_with: the separator joining an array parameter's items
+        into one ``key=value`` pair (a non-exploded ``style``), or
+        ``None`` for the default one-pair-per-item serialization
     :param description: the parameter's description, for docstrings
     """
 
@@ -241,6 +244,7 @@ class Param:
     required: bool
     nullable: bool = False
     default: object | None = None
+    join_with: str | None = None
     description: str | None = None
 
 

@@ -918,7 +918,7 @@ def _field_lines(
     if not field.required:
         default = _default_literal(field, enum_members)
         arguments.append(f"default={default}")
-    serialize = _serialize_argument(field.type)
+    serialize = _serialize_argument(field)
     if serialize is not None:
         arguments.append(serialize)
     optional = field.nullable or (not field.required and default == "None")
@@ -958,22 +958,60 @@ def _default_literal(field: Field | Param, enum_members: dict[str, dict[object, 
     return _literal(field.default)
 
 
-def _serialize_argument(t: TypeExpr) -> str | None:
+def _serialize_argument(field: Field | Param) -> str | None:
     """
     The ``serialize=`` argument a field needs, if any.
 
-    action0-client serializes enums, dates and dataclasses on its own;
-    UUIDs are the one generated type its serializers reject, so UUID
-    fields get an explicit ``str`` conversion.
+    Two cases: UUIDs are the one generated type action0-client's
+    serializers reject, so UUID fields get an explicit ``str``
+    conversion — and a non-exploded array parameter (:py:attr:`Param.join_with`)
+    joins its items into one string. The join expressions are lambdas
+    throughout (never e.g. a bound ``",".join``): the specifiers type
+    ``serialize`` as ``Callable[[Any], Any]``, which a more precisely
+    typed callable does not satisfy under mypy strict.
 
-    :param t: the field's type
+    :param field: the field or parameter
     :return: the argument text, or ``None``
     """
+    t = field.type
+    join_with = field.join_with if isinstance(field, Param) else None
+    if join_with is not None:
+        assert isinstance(t, ArrayType)
+        separator = _literal(join_with)
+        item = _joined_item_expr(t.item)
+        if item == "item":
+            return f"serialize=lambda values: {separator}.join(values)"
+        return f"serialize=lambda values: {separator}.join({item} for item in values)"
     if t == ScalarType(Scalar.UUID):
         return "serialize=str"
     if isinstance(t, ArrayType) and t.item == ScalarType(Scalar.UUID):
         return "serialize=lambda values: [str(value) for value in values]"
     return None
+
+
+def _joined_item_expr(item: TypeExpr) -> str:
+    """
+    The expression turning one joined-array item into its text form.
+
+    Mirrors action0-client's scalar serialization: enums send their
+    ``value``, booleans the JSON spelling, dates/datetimes ISO 8601.
+
+    :param item: the item type (a joinable one — the parser vetted it)
+    :return: the expression over the variable ``item`` (``"item"``
+        itself for plain strings)
+    """
+    match item:
+        case ScalarType(kind=Scalar.STR):
+            return "item"
+        case ScalarType(kind=Scalar.BOOL):
+            return '"true" if item else "false"'
+        case ScalarType(kind=Scalar.DATE) | ScalarType(kind=Scalar.DATETIME):
+            return "item.isoformat()"
+        case EnumType():
+            # str() covers integer-valued enums; string values pass through
+            return "str(item.value)"
+        case _:
+            return "str(item)"
 
 
 def _render_load(operation: OperationIR, result: str, lines: Lines, imports: Imports) -> None:
