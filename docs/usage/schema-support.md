@@ -28,6 +28,12 @@ schema location; lesser omissions are reported as warnings.
 | `description` on a component | the class docstring (a `#:` doc-comment on a union's type alias) |
 | `description` on a property | a `#:` doc-comment above the dataclass field (Sphinx autodoc reads those); looked up through a `$ref` if the property is one |
 
+Model fields keep the schema's property order, except that fields
+rendered with a `= None` default — optional or nullable ones — move
+behind the default-less fields, as plain dataclasses require. A
+required-but-nullable property therefore reads `... | None = None`,
+but its converter still expects the key in the payload.
+
 Union members must be recognizable in a decoded payload — by JSON type
 (a `string \| object` union), by the `discriminator` tag, or by a
 required property no other member declares. A union whose members

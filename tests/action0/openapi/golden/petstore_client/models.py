@@ -171,6 +171,34 @@ def animal_from_json(data: Any) -> Animal:
 
 
 @dataclass
+class HealthRecord:
+    """One veterinary examination of a pet."""
+
+    clinic: str
+    #: The day of the examination. Null when it is not recorded.
+    examined_on: datetime.date | None = None
+    notes: str | None = None
+
+
+def health_record_from_json(data: Any) -> HealthRecord:
+    """
+    Build a :py:class:`HealthRecord` from one decoded JSON object.
+
+    :param data: the decoded JSON object
+    :return: the HealthRecord
+    """
+    return HealthRecord(
+        clinic=data["clinic"],
+        examined_on=(
+            datetime.date.fromisoformat(data["examinedOn"])
+            if data["examinedOn"] is not None
+            else None
+        ),
+        notes=data.get("notes"),
+    )
+
+
+@dataclass
 class CreateTokenResponse:
     """The ``CreateTokenResponse`` model."""
 

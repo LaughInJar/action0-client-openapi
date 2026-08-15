@@ -7,6 +7,7 @@ from .models import Cat
 from .models import Companion
 from .models import CreateTokenResponse
 from .models import Dog
+from .models import HealthRecord
 from .models import Owner
 from .models import Pet
 from .models import PetStatus
@@ -29,6 +30,7 @@ __all__ = [
     "Dog",
     "GetPet",
     "GetPetPhoto",
+    "HealthRecord",
     "ListPets",
     "Owner",
     "Pet",

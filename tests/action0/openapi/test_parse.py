@@ -95,9 +95,27 @@ class PetstoreTestCase(unittest.TestCase):
                 "Companion",
                 "Pet",
                 "Animal",
+                "HealthRecord",
                 "CreateTokenResponse",
             ],
         )
+
+    def test_health_record_model(self) -> None:
+        """
+        Test that a required-but-nullable field sorts with the defaulted
+        fields: it renders ``= None``, so it must not precede a plain
+        required field in the dataclass.
+        """
+        record = self.model("HealthRecord")
+        self.assertEqual(
+            [field.name for field in record.fields],
+            ["clinic", "examined_on", "notes"],
+        )
+        by_name = {field.name: field for field in record.fields}
+        self.assertTrue(by_name["examined_on"].required)
+        self.assertTrue(by_name["examined_on"].nullable)
+        self.assertTrue(by_name["clinic"].required)
+        self.assertFalse(by_name["clinic"].nullable)
 
     def test_enum(self) -> None:
         """
@@ -303,6 +321,30 @@ class EdgeCaseTestCase(unittest.TestCase):
         :return: the parsed IR
         """
         return parse_api(minimal(components={"schemas": {name: schema}}))
+
+    def test_required_nullable_field_sorts_after_defaultless(self) -> None:
+        """
+        Test that field sorting matches the rendered defaults: a
+        required-but-nullable property (rendered ``= None``) listed
+        before a plain required one must end up after it, or the
+        generated dataclass would put a default-less field behind a
+        defaulted one and fail to import (the weather.gov GeoJSON
+        feature schema is shaped exactly like this).
+        """
+        api = self.parse_component(
+            "Feature",
+            {
+                "type": "object",
+                "required": ["geometry", "properties"],
+                "properties": {
+                    "geometry": {"type": "string", "nullable": True},
+                    "properties": {"type": "string"},
+                },
+            },
+        )
+        model = api.models[0]
+        assert isinstance(model, Model)
+        self.assertEqual([field.name for field in model.fields], ["properties", "geometry"])
 
     def test_31_nullable_type_array(self) -> None:
         """
