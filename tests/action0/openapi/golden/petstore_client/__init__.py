@@ -14,6 +14,7 @@ from .models import PetStatus
 from .operations import CreatePet
 from .operations import CreateToken
 from .operations import DeletePet
+from .operations import GetInventory
 from .operations import GetPet
 from .operations import GetPetPhoto
 from .operations import ListPets
@@ -29,6 +30,7 @@ __all__ = [
     "CreateTokenResponse",
     "DeletePet",
     "Dog",
+    "GetInventory",
     "GetPet",
     "GetPetPhoto",
     "HealthRecord",

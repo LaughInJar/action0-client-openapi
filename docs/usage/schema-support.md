@@ -64,7 +64,7 @@ operations get a trailing underscore.
 | JSON request body, `$ref`/array/scalar schema | a single `payload: ... = json_body()` field |
 | `application/x-www-form-urlencoded` body | one `form_field()` per property (scalars, enums, arrays of those) |
 | any other request media type (file uploads: `application/octet-stream`, `image/*`, ...) | a raw `payload: bytes = body()` field, plus a `content_type` header field preset to the media type (several raw media types: the first is sent, with a warning) |
-| lowest documented 2xx response with JSON content | the operation's typed result |
+| lowest documented 2xx response with JSON content | the operation's typed result (a result needing no conversion is returned through `typing.cast` so mypy strict accepts the generated `load_json`) |
 | `204` (or 2xx without content) | `Operation[None]` |
 | 2xx with only non-JSON content | `Operation[bytes]` |
 | operation `summary` / `description` | the operation class docstring |

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from typing import Any
+from typing import cast
 
 from action0.client import JsonOperation
 from action0.client import Operation
@@ -152,6 +153,20 @@ class GetPetPhoto(Operation[bytes]):
         :return: the parsed result
         """
         return response.body_bytes() or b""
+
+
+class GetInventory(JsonOperation[dict[str, int]]):
+    """``GET /store/inventory`` — Returns pet quantities by status."""
+
+    method = Method.GET
+    path = "/store/inventory"
+
+    def load_json(self, data: Any) -> dict[str, int]:
+        """
+        :param data: the decoded JSON payload
+        :return: the parsed result
+        """
+        return cast(dict[str, int], data)
 
 
 class CreateToken(JsonOperation[CreateTokenResponse]):

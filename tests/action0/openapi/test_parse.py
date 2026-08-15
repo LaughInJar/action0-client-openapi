@@ -196,6 +196,7 @@ class PetstoreTestCase(unittest.TestCase):
                 "DeletePet",
                 "UploadPetPhoto",
                 "GetPetPhoto",
+                "GetInventory",
                 "CreateToken",
             ],
         )
