@@ -57,6 +57,7 @@ operations get a trailing underscore.
 | Schema | Generated Python |
 |---|---|
 | path / query / header parameters | `path_param()` / `query()` / `header()` fields |
+| parameter with `type`/`enum` directly on the parameter instead of under `schema:` (a Swagger 2.0 habit some specs keep) | those keywords are treated as the parameter's schema, with a warning |
 | required parameter / property | field without default |
 | optional parameter / property | `... \| None = None` (scalar schema `default`s are kept) |
 | JSON request body, inline object schema | one `json_field()` per property |

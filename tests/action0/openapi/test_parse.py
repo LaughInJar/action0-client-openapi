@@ -6,6 +6,7 @@ from action0.openapi import Api
 from action0.openapi import ArrayType
 from action0.openapi import BodyKind
 from action0.openapi import EnumModel
+from action0.openapi import EnumType
 from action0.openapi import MapType
 from action0.openapi import Model
 from action0.openapi import ModelType
@@ -808,6 +809,69 @@ class EdgeCaseTestCase(unittest.TestCase):
             {"parameters": [{"name": "filter", "in": "query", "content": {}}]}
         )
         with self.assertRaisesRegex(SchemaError, "content-typed"):
+            parse_api(document)
+
+    def test_bare_parameter_schema_salvaged(self) -> None:
+        """
+        Test that a Swagger-2.0-style parameter carrying its type
+        keywords directly is parsed with a warning.
+        """
+        document = self.operation_document(
+            {
+                "parameters": [
+                    {
+                        "name": "bbox",
+                        "in": "query",
+                        "required": True,
+                        "description": "the bounding box",
+                        "type": "string",
+                        "pattern": "^-?[0-9]+",
+                        "example": "-20,-20,20,20",
+                    }
+                ]
+            }
+        )
+        api = parse_api(document)
+        parameter = api.operations[0].params[0]
+        self.assertEqual(parameter.type, ScalarType(Scalar.STR))
+        self.assertTrue(parameter.required)
+        self.assertEqual(parameter.description, "the bounding box")
+        self.assertEqual(
+            api.warnings,
+            (
+                "paths./things.get: parameter 'bbox' declares its type directly on the"
+                " parameter (Swagger 2.0 style) — treated as its schema",
+            ),
+        )
+
+    def test_bare_enum_parameter_salvaged(self) -> None:
+        """
+        Test that a bare ``enum`` (without ``type``) is salvaged too and
+        still synthesizes the inline enum class.
+        """
+        document = self.operation_document(
+            {
+                "operationId": "listThings",
+                "parameters": [
+                    {"name": "sort", "in": "query", "enum": ["asc", "desc"]},
+                ],
+            }
+        )
+        api = parse_api(document)
+        enum = api.models[0]
+        assert isinstance(enum, EnumModel)
+        self.assertEqual(enum.name, "ListThingsSort")
+        self.assertEqual(api.operations[0].params[0].type, EnumType(enum.name))
+
+    def test_untyped_parameter_still_rejected(self) -> None:
+        """
+        Test that a parameter with neither schema nor bare type keywords
+        keeps the original error.
+        """
+        document = self.operation_document(
+            {"parameters": [{"name": "filter", "in": "query", "description": "no type"}]}
+        )
+        with self.assertRaisesRegex(SchemaError, "has no schema"):
             parse_api(document)
 
     def test_placeholder_mismatch_rejected(self) -> None:
