@@ -1028,7 +1028,12 @@ class _Parser:
         body_type, _ = self._schema_type(schema, context=f"{operation_name} body", where=where)
         name = field_names.claim(field_name("payload", reserved=RESERVED_OPERATION_FIELDS))
         field = Field(
-            name=name, wire_name=name, type=body_type, required=required, nullable=not required
+            name=name,
+            wire_name=name,
+            type=body_type,
+            required=required,
+            nullable=not required,
+            description=self._description(schema),
         )
         return Body(kind=BodyKind.JSON_BODY, fields=(field,), type=body_type, required=required)
 

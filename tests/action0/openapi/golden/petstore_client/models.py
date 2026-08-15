@@ -107,13 +107,18 @@ def companion_from_json(data: Any) -> Companion:
 class Pet:
     """One pet of the store."""
 
+    #: The pet's unique identifier.
     id: int
     name: str
+    #: The pet's sale status.
     status: PetStatus | None = None
+    #: The pet's day of birth.
+    #: Unknown for pets rescued from the wild.
     born_on: datetime.date | None = None
     owner: Owner | None = None
     labels: dict[str, str] | None = None
     friends: list[Pet] | None = None
+    #: A pet's companion animal.
     companion: Companion | None = None
 
 
@@ -169,6 +174,7 @@ def animal_from_json(data: Any) -> Animal:
 class CreateTokenResponse:
     """The ``CreateTokenResponse`` model."""
 
+    #: The bearer token to present in the Authorization header.
     access_token: str
     expires_in: int | None = None
 

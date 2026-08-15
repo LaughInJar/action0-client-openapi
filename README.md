@@ -45,7 +45,8 @@ Generated code is meant to be checked in and reviewed like hand-written
 code: it is readable, ruff-clean and fully typed — mypy strict, pyright
 and ty pass on it. Models become plain dataclasses with generated
 JSON converters, endpoints become `Operation` subclasses, security
-schemes become client constructor credentials. The [schema support
+schemes become client constructor credentials — with the schema's
+`description`s carried along as docstrings and `#:` doc-comments. The [schema support
 matrix](https://laughinjar.github.io/action0-client-openapi/usage/schema-support.html)
 lists exactly which OpenAPI 3.0/3.1 constructs are covered and what is
 deliberately deferred (oneOf unions, remote $refs, ...).

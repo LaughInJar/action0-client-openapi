@@ -11,16 +11,24 @@ learn.
 Schema components become dataclasses; enums become `enum.Enum`
 subclasses; each model gets a module-level converter function building
 it from a decoded JSON payload (required keys via `data[...]`, optional
-ones via `data.get(...)`, dates/UUIDs/enums/nested models converted):
+ones via `data.get(...)`, dates/UUIDs/enums/nested models converted).
+The schema's human-readable text survives: a component's `description`
+becomes the class docstring, a property's `description` becomes a `#:`
+doc-comment above its field (which Sphinx autodoc reads as the
+attribute's documentation):
 
 ```python
 @dataclass
 class Pet:
     """One pet of the store."""
 
+    #: The pet's unique identifier.
     id: int
     name: str
+    #: The pet's sale status.
     status: PetStatus | None = None
+    #: The pet's day of birth.
+    #: Unknown for pets rescued from the wild.
     born_on: datetime.date | None = None  # "bornOn" on the wire
     friends: list[Pet] | None = None
 
@@ -32,7 +40,10 @@ def pet_from_json(data: Any) -> Pet: ...
 
 One class per endpoint, method and path fixed per class, parameters and
 body as typed fields (wire spellings preserved via the specifiers'
-`name` argument), the response parsed into the model:
+`name` argument), the response parsed into the model. The operation's
+`summary` and `description` form the class docstring; parameter and
+body-property `description`s become `#:` doc-comments above their
+fields:
 
 ```python
 class GetPet(JsonOperation[Pet]):
@@ -41,6 +52,7 @@ class GetPet(JsonOperation[Pet]):
     method = Method.GET
     path = "/pets/{pet_id}"
 
+    #: The identifier of the pet to operate on.
     pet_id: int = path_param()
 
     def load_json(self, data: Any) -> Pet:
