@@ -20,10 +20,12 @@ from collections.abc import Collection
 from collections.abc import Mapping
 
 #: splits a raw name into words: pluralized acronyms ("APIs" -> APIs,
-#: two capitals at least so "Rs232" stays one word), acronym runs
-#: ("HTTPServer" -> HTTP, Server), capitalized words ("petId" -> pet,
-#: Id), and lowercase/digit runs; everything non-alphanumeric separates
-_WORDS = re.compile(r"[A-Z]{2,}s(?![a-z])|[A-Z]+(?![a-z])|[A-Z][a-z0-9]*|[a-z0-9]+")
+#: two capitals at least so "Rs232" stays one word), acronym runs with
+#: their trailing digits ("HTTPServer" -> HTTP, Server; "V1Forecast" ->
+#: V1, Forecast; "SHA256Sum" -> SHA256, Sum), capitalized words
+#: ("petId" -> pet, Id), and lowercase/digit runs; everything
+#: non-alphanumeric separates
+_WORDS = re.compile(r"[A-Z]{2,}s(?![a-z])|[A-Z]+[0-9]*(?![a-z])|[A-Z][a-z0-9]*|[a-z0-9]+")
 
 #: names an operation dataclass field must not use: the Operation
 #: ClassVars (reserved by action0-client) and the field specifiers the
@@ -75,6 +77,8 @@ def class_name(raw: str) -> str:
     'HttpValidationError'
     >>> class_name("APIs.guru")  # pluralized acronyms stay one word
     'ApisGuru'
+    >>> class_name("get /v1/forecast")  # digits stay with their word
+    'GetV1Forecast'
     >>> class_name("PokéAPI")  # accents are dropped, not word breaks
     'PokeApi'
     >>> class_name("1password")  # leading digit: prefixed
@@ -99,6 +103,10 @@ def field_name(raw: str, *, reserved: Collection[str] = ()) -> str:
     'x_request_id'
     >>> field_name("numAPIs")  # pluralized acronyms stay one word
     'num_apis'
+    >>> field_name("GetV1ForecastResponse")  # digits stay with their word
+    'get_v1_forecast_response'
+    >>> field_name("SHA256Sum")
+    'sha256_sum'
     >>> field_name("class")  # Python keyword
     'class_'
     >>> field_name("path", reserved=RESERVED_OPERATION_FIELDS)

@@ -60,6 +60,15 @@ class ClassNameTestCase(unittest.TestCase):
         self.assertEqual(class_name("OAuth2Token"), "OAuth2Token")
         self.assertEqual(class_name("2fa"), "V2fa")
 
+    def test_digits_stay_with_acronym_runs(self) -> None:
+        """
+        Test that digits after an acronym run belong to its word: a
+        version segment must not split into a lone letter and a digit.
+        """
+        self.assertEqual(class_name("get /v1/forecast"), "GetV1Forecast")
+        self.assertEqual(class_name("SHA256Sum"), "Sha256Sum")
+        self.assertEqual(class_name("MP3"), "Mp3")
+
     def test_nothing_left(self) -> None:
         """
         Test that a name without alphanumerics still yields a name.
@@ -123,6 +132,15 @@ class FieldNameTestCase(unittest.TestCase):
         Test that a leading digit is prefixed.
         """
         self.assertEqual(field_name("2fa"), "v_2fa")
+
+    def test_digits_stay_with_acronym_runs(self) -> None:
+        """
+        Test that PascalCase class names round-trip through snake_case
+        without splitting version segments (the converter names of
+        operation-derived models: GetV1Forecast → get_v1_forecast...).
+        """
+        self.assertEqual(field_name("GetV1ForecastResponse"), "get_v1_forecast_response")
+        self.assertEqual(field_name("SHA256Sum"), "sha256_sum")
 
 
 class ConstantNameTestCase(unittest.TestCase):
