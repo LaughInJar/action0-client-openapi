@@ -128,11 +128,18 @@ class Model:
     :param name: the Python class name
     :param fields: the model's fields; the ones rendered without a
         dataclass default (required and not nullable) come first
+    :param additional_field: the catch-all field collecting the payload
+        keys not declared under ``properties`` (schemas combining
+        ``properties`` with ``additionalProperties``), or ``None`` when
+        the schema declares no additional properties; its type is
+        always a :py:class:`MapType`, and its ``wire_name`` is empty —
+        the catch-all has no single wire spelling
     :param description: the schema's description, for the docstring
     """
 
     name: str
     fields: tuple[Field, ...]
+    additional_field: Field | None = None
     description: str | None = None
 
 

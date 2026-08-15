@@ -42,6 +42,7 @@ from .ir import UnionCheck
 from .ir import UnionModel
 from .ir import UnionType
 from .names import converter_name
+from .names import properties_constant_name
 from .types import annotation
 from .types import converter_expr
 from .types import imports_for
@@ -354,18 +355,37 @@ def _render_model(model: Model, lines: Lines, imports: Imports) -> None:
         default = "None" if optional else None
         for line in _annotated_lines(field.name, rendered, default, lines.level):
             lines.write(line)
+    if model.additional_field is not None:
+        # the catch-all always renders last: it is optional (defaulted),
+        # so it may not precede a default-less field
+        extra = model.additional_field
+        imports.add(*imports_for(extra.type))
+        if extra.description:
+            lines.comment(extra.description)
+        rendered = annotation(extra.type, optional=True)
+        for line in _annotated_lines(extra.name, rendered, "None", lines.level):
+            lines.write(line)
     lines.dedent()
 
 
 def _render_converter(model: Model, lines: Lines, imports: Imports) -> None:
     """
-    Render the JSON-to-model converter function of one model.
+    Render the JSON-to-model converter function of one model, preceded
+    by the declared-properties set constant when the model has a
+    catch-all ``additionalProperties`` field.
 
     :param model: the model
     :param lines: the module builder
     :param imports: the module's import collector
     """
     imports.add("from typing import Any")
+    if model.additional_field is not None:
+        lines.write(f"# payload keys outside this set land in {model.additional_field.name}")
+        constant = properties_constant_name(model.name)
+        wire_names = [field.wire_name for field in model.fields]
+        for line in _constant_lines(constant, wire_names, lines.level):
+            lines.write(line)
+        lines.separate()
     for line in _def_lines(converter_name(model.name), ["data: Any"], model.name, lines.level):
         lines.write(line)
     lines.indent()
@@ -381,9 +401,52 @@ def _render_converter(model: Model, lines: Lines, imports: Imports) -> None:
         imports.add(*imports_for(field.type))
         for line in _field_conversion(field, lines.level):
             lines.write(line)
+    if model.additional_field is not None:
+        imports.add(*imports_for(model.additional_field.type))
+        for line in _additional_conversion(model, lines.level):
+            lines.write(line)
     lines.dedent()
     lines.write(")")
     lines.dedent()
+
+
+def _constant_lines(name: str, values: list[str], level: int) -> list[str]:
+    """
+    Lay out a module-level set constant within the line limit.
+
+    Over the limit, the set display opens up with one element per line;
+    the magic trailing comma also keeps ruff format from collapsing it
+    back onto one line.
+
+    :param name: the constant's name
+    :param values: the (string) set elements, in order
+    :param level: the indentation level the lines are written at
+    :return: the laid-out lines, relative to ``level``
+    """
+    literals = [_literal(value) for value in values]
+    line = f"{name} = {{{', '.join(literals)}}}"
+    if _fits(line, level):
+        return [line]
+    return [f"{name} = {{", *(f"    {literal}," for literal in literals), "}"]
+
+
+def _additional_conversion(model: Model, level: int) -> list[str]:
+    """
+    Render the catch-all keyword argument of a model's converter: a
+    dict comprehension collecting every payload key outside the
+    declared-properties constant.
+
+    :param model: the model (with a catch-all field)
+    :param level: the indentation level the lines are written at
+    :return: the lines (one, or several when wrapped)
+    """
+    field = model.additional_field
+    assert field is not None and isinstance(field.type, MapType)
+    # depth 1: the comprehension itself claims the depth-0 variables
+    element = converter_expr(field.type.value, "value", _depth=1)
+    constant = properties_constant_name(model.name)
+    expression = f"{{key: {element} for key, value in data.items() if key not in {constant}}}"
+    return _wrapped(f"{field.name}=", expression, None, level)
 
 
 def _field_conversion(field: Field, level: int) -> list[str]:
@@ -476,7 +539,7 @@ def _expression_lines(expression: str, level: int) -> list[str]:
     return [
         opener,
         *(f"    {line}" for line in _expression_lines(element, level + 1)),
-        f"    {clause}",
+        *(f"    {part}" for part in _clause_parts(clause, level + 1)),
         "]" if opener == "[" else "}",
     ]
 
@@ -516,6 +579,51 @@ def _split_comprehension(expression: str) -> tuple[str, str, str] | None:
     return None
 
 
+def _clause_parts(clause: str, level: int) -> list[str]:
+    """
+    Split a comprehension clause at its top-level ``if`` filters.
+
+    When ruff format opens a comprehension up, every ``for`` and ``if``
+    clause gets a line of its own; an over-long ``if x not in y`` filter
+    breaks once more, before the ``not in``.
+
+    :param clause: the clause text (``for ...``, possibly with filters)
+    :param level: the indentation level the parts are written at
+    :return: the clause parts, one per line
+    """
+    parts = []
+    depth = 0
+    in_string = False
+    start = 0
+    index = 0
+    while index < len(clause):
+        char = clause[index]
+        if in_string:
+            if char == "\\":
+                index += 1
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        elif depth == 0 and clause.startswith(" if ", index):
+            parts.append(clause[start:index])
+            start = index + 1
+        index += 1
+    parts.append(clause[start:])
+    split = []
+    for part in parts:
+        if part.startswith("if ") and not _fits(part, level) and " not in " in part:
+            head, _, tail = part.partition(" not in ")
+            split.extend([head, f"not in {tail}"])
+        else:
+            split.append(part)
+    return split
+
+
 def _return_lines(expression: str, level: int) -> list[str]:
     """
     Lay out a ``return <expression>`` statement within the line limit.
@@ -534,7 +642,7 @@ def _return_lines(expression: str, level: int) -> list[str]:
     return [
         f"return {opener}",
         *(f"    {line}" for line in _expression_lines(element, level + 1)),
-        f"    {clause}",
+        *(f"    {part}" for part in _clause_parts(clause, level + 1)),
         "]" if opener == "[" else "}",
     ]
 

@@ -90,6 +90,35 @@
           }
         }
       },
+      "Catchallmodelwithanextremelylonggeneratedpythonclassname": {
+        "type": "object",
+        "required": [
+          "declaredpropertyfirst"
+        ],
+        "properties": {
+          "declaredpropertyfirst": {
+            "type": "string"
+          },
+          "declaredpropertysecondwithalongname": {
+            "type": "string"
+          },
+          "declaredpropertythirdwithanevenlongername": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": {
+          "$ref": "#/components/schemas/Modelwithanextremelylonggeneratedpythonclassnameforwrapping"
+        }
+      },
+      "Catchallmodelwithanabsurdlylonggeneratedpythonclassnameindeed": {
+        "type": "object",
+        "properties": {
+          "declaredproperty": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      },
       "Enumerationwithanextremelylonggeneratedpythonclassname": {
         "type": "string",
         "enum": [

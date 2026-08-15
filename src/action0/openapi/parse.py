@@ -9,7 +9,7 @@ operations with parameters, body and response type, and the referenced
 ``securitySchemes`` become client credentials. Everything outside the
 supported subset raises :py:class:`~action0.openapi.errors.SchemaError`
 naming the offending schema location; lesser omissions (an unsupported
-security scheme, an ignored ``additionalProperties``) are collected as
+security scheme, several request media types) are collected as
 :py:attr:`~action0.openapi.ir.Api.warnings`.
 """
 
@@ -729,11 +729,6 @@ class _Parser:
         properties = node.get("properties")
         additional = node.get("additionalProperties")
         if properties:
-            if isinstance(additional, Mapping) or additional is True:
-                self._warnings.append(
-                    f"{where}: additionalProperties next to properties is ignored —"
-                    " extra payload keys are dropped"
-                )
             name = self._class_names.claim(class_name(context))
             return self._model_type(node, name=name, where=where)
         if isinstance(additional, Mapping):
@@ -746,6 +741,13 @@ class _Parser:
     def _model_type(self, node: Mapping[str, Any], *, name: str, where: str) -> ModelType:
         """
         Synthesize a model dataclass for an object schema with properties.
+
+        A schema combining ``properties`` with ``additionalProperties``
+        additionally gets a catch-all field: the converter collects
+        every payload key outside the declared properties into a dict
+        typed after the ``additionalProperties`` schema. The catch-all
+        is filled when *parsing* only — a model serialized into a
+        request body sends it as a nested object, not flattened.
 
         :param node: the schema node
         :param name: the already-claimed Python class name
@@ -782,9 +784,47 @@ class _Parser:
         # survives within the groups
         fields.sort(key=lambda field: not field.required or field.nullable)
         self._models.append(
-            Model(name=name, fields=tuple(fields), description=node.get("description"))
+            Model(
+                name=name,
+                fields=tuple(fields),
+                additional_field=self._additional_field(node, registry, name=name, where=where),
+                description=node.get("description"),
+            )
         )
         return ModelType(name)
+
+    def _additional_field(
+        self, node: Mapping[str, Any], registry: NameRegistry, *, name: str, where: str
+    ) -> Field | None:
+        """
+        Build a model's catch-all field for its ``additionalProperties``.
+
+        :param node: the model's schema node
+        :param registry: the model's field name scope (claimed *after*
+            the declared properties, so a declared ``additional_properties``
+            keeps its name and the catch-all gets a numbered one)
+        :param name: the model's Python class name
+        :param where: the schema location, for error messages
+        :return: the catch-all field, or ``None`` when the schema
+            declares no additional properties
+        """
+        additional = node.get("additionalProperties")
+        if isinstance(additional, Mapping):
+            value_type, _ = self._schema_type(
+                additional, context=f"{name} value", where=f"{where}.additionalProperties"
+            )
+            description = self._description(additional)
+        elif additional is True:
+            value_type, description = ScalarType(Scalar.ANY), None
+        else:
+            return None
+        return Field(
+            name=registry.claim(field_name("additional_properties")),
+            wire_name="",
+            type=MapType(value_type),
+            required=False,
+            description=description or "The payload keys not declared under properties.",
+        )
 
     def _default_for(self, node: Mapping[str, Any], prop_type: TypeExpr) -> object | None:
         """
@@ -1077,6 +1117,14 @@ class _Parser:
                 self._warnings.append(
                     f"{where}: the body is optional, so its required properties"
                     " are generated as optional fields"
+                )
+            additional = schema.get("additionalProperties")
+            if isinstance(additional, Mapping) or additional is True:
+                # the catch-all field only exists on parsed models — an
+                # operation's body fields have nowhere to send extras
+                self._warnings.append(
+                    f"{where}: additionalProperties of a request body are not sent —"
+                    " only the declared properties become fields"
                 )
             fields = []
             for wire_name, prop in schema["properties"].items():

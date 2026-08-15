@@ -172,6 +172,26 @@ def converter_name(model_class: str) -> str:
     return f"{field_name(model_class)}_from_json"
 
 
+def properties_constant_name(model_class: str) -> str:
+    """
+    Name the declared-properties set constant of a model with a
+    catch-all ``additionalProperties`` field.
+
+    The constant holds the wire names of the declared properties; the
+    model's converter fills the catch-all field with every payload key
+    outside the set.
+
+    >>> properties_constant_name("Pet")
+    '_PET_PROPERTIES'
+    >>> properties_constant_name("HttpError")
+    '_HTTP_ERROR_PROPERTIES'
+
+    :param model_class: the model's Python class name
+    :return: the constant's name
+    """
+    return f"_{field_name(model_class).upper()}_PROPERTIES"
+
+
 def path_placeholders(path: str) -> tuple[str, ...]:
     """
     Return the ``{placeholder}`` names of a path template, in order.

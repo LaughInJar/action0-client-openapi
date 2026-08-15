@@ -361,6 +361,19 @@ class GoldenBehaviorTestCase(unittest.TestCase):
         with self.assertRaises(KeyError):
             self.namespace["pet_from_json"]({"name": "Rex"})
 
+    def test_catch_all_collects_undeclared_keys(self) -> None:
+        """
+        Test that payload keys outside the declared properties land in
+        the catch-all field — and declared ones do not.
+        """
+        record = self.namespace["health_record_from_json"](
+            {"clinic": "Vet Praxis", "examinedOn": None, "weight": 7.4, "temperature": 38.6}
+        )
+        self.assertEqual(record.additional_properties, {"weight": 7.4, "temperature": 38.6})
+        self.assertEqual(record.clinic, "Vet Praxis")
+        empty = self.namespace["health_record_from_json"]({"clinic": "Vet", "examinedOn": None})
+        self.assertEqual(empty.additional_properties, {})
+
 
 class GoldenToolchainTestCase(unittest.TestCase):
     """
@@ -487,6 +500,52 @@ class WrappingTestCase(unittest.TestCase):
             '                for key, value in data["labels"].items()\n'
             "            }\n"
             "        ),\n",
+            self.files["models.py"],
+        )
+
+    def test_properties_constant_wraps(self) -> None:
+        """
+        Test that an over-long declared-properties constant opens its
+        set with one element per line and a magic trailing comma.
+        """
+        self.assertIn(
+            "_CATCHALLMODELWITHANEXTREMELYLONGGENERATEDPYTHONCLASSNAME_PROPERTIES = {\n"
+            '    "declaredpropertyfirst",\n'
+            '    "declaredpropertysecondwithalongname",\n'
+            '    "declaredpropertythirdwithanevenlongername",\n'
+            "}\n",
+            self.files["models.py"],
+        )
+
+    def test_catch_all_comprehension_splits_with_filter(self) -> None:
+        """
+        Test that the catch-all comprehension puts its for clause and
+        its if filter on lines of their own.
+        """
+        self.assertIn(
+            "        additional_properties=(\n"
+            "            {\n"
+            "                key: modelwithanextremelylonggeneratedpythonclassnameforwrapping"
+            "_from_json(value)\n"
+            "                for key, value in data.items()\n"
+            "                if key not in "
+            "_CATCHALLMODELWITHANEXTREMELYLONGGENERATEDPYTHONCLASSNAME_PROPERTIES\n"
+            "            }\n"
+            "        ),\n",
+            self.files["models.py"],
+        )
+
+    def test_catch_all_filter_splits_before_not_in(self) -> None:
+        """
+        Test that an over-long if filter breaks before ``not in``, the
+        way ruff format breaks it.
+        """
+        self.assertIn(
+            "                key: value\n"
+            "                for key, value in data.items()\n"
+            "                if key\n"
+            "                not in "
+            "_CATCHALLMODELWITHANABSURDLYLONGGENERATEDPYTHONCLASSNAMEINDEED_PROPERTIES\n",
             self.files["models.py"],
         )
 
