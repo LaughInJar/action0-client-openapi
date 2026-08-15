@@ -1,0 +1,187 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Longnames",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/plain": {
+      "get": {
+        "operationId": "fieldlessBytes",
+        "responses": {
+          "200": {
+            "description": "raw",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/things": {
+      "get": {
+        "operationId": "listLongThings",
+        "parameters": [
+          {
+            "name": "firstparam",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/Enumerationwithanextremelylonggeneratedpythonclassname"
+            }
+          },
+          {
+            "name": "secondparamname",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/Enumerationwithanextremelylonggeneratedpythonclassname",
+              "default": "first"
+            }
+          },
+          {
+            "name": "thirdparameterlonger",
+            "in": "query",
+            "schema": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Enumerationwithanextremelylonggeneratedpythonclassname"
+              }
+            }
+          },
+          {
+            "name": "fourthparameterwithamuchlongername",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/Enumerationwithanextremelylonggeneratedpythonclassname"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "things",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Modelwithanextremelylonggeneratedpythonclassnameforwrapping"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Modelwithanextremelylonggeneratedpythonclassnameforwrapping": {
+        "type": "object",
+        "required": [
+          "value"
+        ],
+        "properties": {
+          "value": {
+            "type": "string"
+          }
+        }
+      },
+      "Enumerationwithanextremelylonggeneratedpythonclassname": {
+        "type": "string",
+        "enum": [
+          "first",
+          "second"
+        ]
+      },
+      "Firstunionmemberwithanextremelylonggeneratedclassname": {
+        "type": "object",
+        "required": [
+          "alpha"
+        ],
+        "properties": {
+          "alpha": {
+            "type": "string"
+          }
+        }
+      },
+      "Secondunionmemberwithanextremelylonggeneratedclassname": {
+        "type": "object",
+        "required": [
+          "beta"
+        ],
+        "properties": {
+          "beta": {
+            "type": "string"
+          }
+        }
+      },
+      "Longunion": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/Firstunionmemberwithanextremelylonggeneratedclassname"
+          },
+          {
+            "$ref": "#/components/schemas/Secondunionmemberwithanextremelylonggeneratedclassname"
+          }
+        ]
+      },
+      "Wrappingholder": {
+        "type": "object",
+        "required": [
+          "items",
+          "matrix",
+          "labels",
+          "choice"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Modelwithanextremelylonggeneratedpythonclassnameforwrapping"
+            }
+          },
+          "maybe": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Modelwithanextremelylonggeneratedpythonclassnameforwrapping"
+            }
+          },
+          "matrix": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Modelwithanextremelylonggeneratedpythonclassnameforwrapping"
+              }
+            }
+          },
+          "labels": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Modelwithanextremelylonggeneratedpythonclassnameforwrapping"
+            }
+          },
+          "choice": {
+            "$ref": "#/components/schemas/Longunion"
+          },
+          "optionalfieldwithalongername": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Modelwithanextremelylonggeneratedpythonclassnameforwrapping"
+            }
+          },
+          "optionalitemsone": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Modelwithanextremelylonggeneratedpythonclassnameforwrapping"
+            }
+          }
+        }
+      }
+    }
+  }
+}
