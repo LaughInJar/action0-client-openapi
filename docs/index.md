@@ -28,6 +28,14 @@ hand-written code: readable, ruff-clean, and fully typed — mypy strict,
 pyright and ty pass on it. {doc}`usage/schema-support` lists exactly
 which OpenAPI constructs are covered.
 
+For a real-world showcase, see
+[action0-open-meteo-api](https://github.com/LaughInJar/action0-open-meteo-api):
+a complete, typed client library for the Open-Meteo weather APIs whose
+generated subpackages — one per sub-API, from forecasts to flood data —
+were all produced by this tool. Its
+[documentation](https://laughinjar.github.io/action0-open-meteo-api/)
+includes a walkthrough of how the client was generated.
+
 The `action0` namespace is simply the one the author likes to use for
 personal projects.
 
