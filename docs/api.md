@@ -3,7 +3,7 @@
 Everything public is importable from the package root:
 
 ```python
-from action0.openapi import load_schema, RefResolver, SchemaError
+from action0.openapi import load_documents, bundle_documents, RefResolver, SchemaError
 from action0.openapi import Api, Model, EnumModel, Field, OperationIR, Param, Body
 from action0.openapi import SecurityScheme
 ```
@@ -12,6 +12,13 @@ from action0.openapi import SecurityScheme
 
 ```{eval-rst}
 .. automodule:: action0.openapi.loader
+   :members:
+```
+
+## Multi-file bundling
+
+```{eval-rst}
+.. automodule:: action0.openapi.bundle
    :members:
 ```
 

@@ -9,13 +9,15 @@ generated code is plain, readable ``action0-client`` code — it depends on
 ``action0-client`` only, not on this package, and runs on whichever
 backend (sync, asyncio, Twisted, ...) is plugged in.
 
-The pipeline: :py:func:`load_schema` reads the document,
+The pipeline: :py:func:`load_documents` reads the document and the
+files it references, :py:func:`bundle_documents` merges them into one,
 :py:class:`RefResolver` resolves local ``$ref`` pointers, the translation
 stage produces the intermediate representation around :py:class:`Api`,
 and the emitter renders it as a Python package. Input problems raise
 :py:class:`SchemaError`.
 """
 
+from .bundle import bundle_documents
 from .errors import SchemaError
 from .generate import default_client_name
 from .generate import default_package_name
@@ -44,6 +46,8 @@ from .ir import UnionCase
 from .ir import UnionCheck
 from .ir import UnionModel
 from .ir import UnionType
+from .loader import Documents
+from .loader import load_documents
 from .loader import load_schema
 from .parse import parse_api
 from .resolve import RefResolver
@@ -55,6 +59,7 @@ __all__ = [
     "ArrayType",
     "Body",
     "BodyKind",
+    "Documents",
     "EnumModel",
     "EnumType",
     "Field",
@@ -76,9 +81,11 @@ __all__ = [
     "UnionCheck",
     "UnionModel",
     "UnionType",
+    "bundle_documents",
     "default_client_name",
     "default_package_name",
     "generate_package",
+    "load_documents",
     "load_schema",
     "parse_api",
     "write_package",

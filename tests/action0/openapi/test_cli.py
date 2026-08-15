@@ -67,6 +67,21 @@ class CliTestCase(unittest.TestCase):
                     twin.read_text("utf-8"),
                 )
 
+    def test_multifile_schema(self) -> None:
+        """
+        Test that a schema referencing other files generates, with the
+        bundling warning on stderr.
+        """
+        code, stdout, stderr = self.run_cli(
+            str(FIXTURES / "multifile" / "zoo.yaml"), "-o", str(self.output)
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("warning:", stderr)
+        self.assertIn("'Tag' is already taken", stderr)
+        models = (self.output / "zoo_client" / "models.py").read_text("utf-8")
+        self.assertIn("class Animal:", models)
+        self.assertIn("class Tag2:", models)
+
     def test_name_and_base_url_overrides(self) -> None:
         """
         Test --package-name, --client-name and --base-url.

@@ -1,0 +1,18 @@
+components:
+  schemas:
+    Id:
+      type: object
+      required:
+      - value
+      properties:
+        value:
+          type: integer
+    Money:
+      type: object
+      required:
+      - amount
+      properties:
+        amount:
+          type: number
+        currency:
+          type: string

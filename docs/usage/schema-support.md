@@ -73,6 +73,29 @@ Operation classes are named after the `operationId` (`listPets` →
 `ListPets`), falling back to method + path (`GET /pets/{petId}` →
 `GetPetsPetId`).
 
+## Multi-file documents
+
+Schemas split over several files — references like
+`$ref: './components/geo.yaml#/components/schemas/Point'`, with paths
+relative to the referencing file — are bundled into one document before
+translation:
+
+- A reference to another file's `#/components/<section>/<name>` moves
+  that component (and, recursively, everything it references) into the
+  root document's matching section. It keeps its name; if the name is
+  already taken by a *different* definition, a numbered name is picked
+  (`Tag` → `Tag2`) and a warning reports the rename. An identical,
+  reference-free definition is shared silently instead.
+- A reference to anything that is not a component — a deep pointer like
+  `other.yaml#/components/schemas/Pet/properties/name`, or a whole-file
+  reference to a bare schema file — is inlined in place, like an inline
+  schema written there. A reference *cycle* through such anonymous
+  nodes cannot be inlined and is an error; cycles through components
+  are fine.
+
+`http(s)://` references are **not** downloaded — save the file next to
+the schema and reference it by a relative path.
+
 ## Security schemes
 
 Schemes referenced by the document's or any operation's `security` become
@@ -95,8 +118,8 @@ to pass those credentials yourself (default headers or an
   property differently — flatten those by hand before generating.
   (Constraint-only keywords inside `allOf` parts, like `minProperties`,
   are ignored.)
-- Remote and file `$ref`s (`other.yaml#/...`) — bundle the document
-  first; only local `#/...` references resolve.
+- `http(s)://` `$ref`s — referenced schema files are read from disk
+  only, never downloaded.
 - Cookie parameters, content-typed parameters, request bodies other
   than JSON and form-urlencoded (e.g. `multipart/form-data`).
 - Per-status response typing beyond the picked 2xx (other 2xx responses

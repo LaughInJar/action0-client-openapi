@@ -1,0 +1,33 @@
+# a component-only fragment: no openapi/info/paths keys
+components:
+  schemas:
+    Animal:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+        tag:
+          $ref: '#/components/schemas/Tag'
+        id:
+          $ref: './shared.yaml#/components/schemas/Id'
+        exhibit:
+          $ref: '../zoo.yaml#/components/schemas/Exhibit'
+        nickname:
+          $ref: '#/components/schemas/Animal/properties/name'
+        price:
+          $ref: './shared.yaml#/components/schemas/Money'
+    Tag:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+  parameters:
+    limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
