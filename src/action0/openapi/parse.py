@@ -16,6 +16,7 @@ security scheme, several request media types) are collected as
 from __future__ import annotations
 
 from collections.abc import Mapping
+from http import HTTPStatus
 from typing import Any
 
 from .errors import SchemaError
@@ -25,6 +26,7 @@ from .ir import Body
 from .ir import BodyKind
 from .ir import EnumModel
 from .ir import EnumType
+from .ir import ErrorCase
 from .ir import Field
 from .ir import MapType
 from .ir import Model
@@ -65,6 +67,7 @@ _METHODS = ("get", "put", "post", "delete", "options", "head", "patch", "trace")
 _RESERVED_CLASS_NAMES = (
     "Any",
     "APIClient",
+    "APIError",
     "BackendT_co",
     "JsonOperation",
     "Method",
@@ -106,6 +109,14 @@ _JOINABLE_SCALARS = frozenset(
         Scalar.UUID,
     }
 )
+
+#: the exception name stems of the range/default response keys (the
+#: ``Error`` suffix is appended like for concrete statuses)
+_RANGE_ERROR_NAMES = {
+    "4XX": "Client",
+    "5XX": "Server",
+    "default": "Default",
+}
 
 # schema keywords that a Swagger-2.0-style parameter carries directly on
 # the parameter object instead of under ``schema:``
@@ -180,6 +191,9 @@ class _Parser:
         # forward declaration (model -> model) work
         self._components: dict[str, tuple[TypeExpr, bool] | None] = {}
         self._models: list[Model | EnumModel | UnionModel] = []
+        # exception class name per (status key, error model) — operations
+        # documenting the same error share one exception class
+        self._error_names: dict[tuple[str, str], str] = {}
         self._operations: list[OperationIR] = []
         self._warnings: list[str] = []
 
@@ -1002,6 +1016,7 @@ class _Parser:
                 body=body,
                 response_kind=response_kind,
                 response_type=response_type,
+                errors=self._parse_errors(name, operation, where=where),
                 summary=operation.get("summary"),
                 description=operation.get("description"),
                 tag=str(operation["tags"][0]) if operation.get("tags") else None,
@@ -1411,6 +1426,96 @@ class _Parser:
             where=f"{where}.responses.{chosen[1]}",
         )
         return ResponseKind.MODEL, response_type
+
+    def _parse_errors(
+        self, operation_name: str, operation: Mapping[str, Any], *, where: str
+    ) -> tuple[ErrorCase, ...]:
+        """
+        Translate the documented non-2xx responses into typed
+        exceptions.
+
+        A concrete 4xx/5xx status, a ``4XX``/``5XX`` range or a
+        ``default`` response with a JSON object schema becomes an
+        :py:class:`ErrorCase`: the payload model plus a generated
+        :py:class:`~action0.client.errors.APIError` subclass raised by
+        the operation's ``check``. Responses without JSON content or
+        with a non-object schema are left to the plain ``APIError``.
+
+        :param operation_name: the operation's class name (context for
+            inline error models)
+        :param operation: the operation node
+        :param where: the schema location, for error messages
+        :return: the cases, concrete statuses first, then the ranges,
+            then ``default`` — the order ``check`` tests them in
+        """
+        responses = operation.get("responses") or {}
+        cases = []
+        for status in responses:
+            key = str(status)
+            if key.isdigit() and 400 <= int(key) <= 599:
+                normalized, rank = key, (0, int(key))
+            elif key.upper() in ("4XX", "5XX"):
+                normalized, rank = key.upper(), (1, int(key[0]))
+            elif key.lower() == "default":
+                normalized, rank = "default", (2, 0)
+            else:
+                continue
+            response = self._resolver.deref(responses[status])
+            content = response.get("content") or {}
+            json_media = self._json_media_type(content)
+            if json_media is None:
+                continue
+            schema = content[json_media].get("schema")
+            if not isinstance(schema, Mapping):
+                continue
+            error_type, _ = self._schema_type(
+                schema,
+                context=f"{operation_name} error",
+                where=f"{where}.responses.{key}",
+            )
+            if not isinstance(error_type, ModelType):
+                continue
+            cases.append(
+                (
+                    rank,
+                    ErrorCase(
+                        status=normalized,
+                        exception=self._exception_name(normalized, error_type.name),
+                        model=error_type.name,
+                        description=response.get("description"),
+                    ),
+                )
+            )
+        cases.sort(key=lambda entry: entry[0])
+        return tuple(case for _, case in cases)
+
+    def _exception_name(self, status: str, model: str) -> str:
+        """
+        The exception class name of one (status, error model) pair.
+
+        Concrete statuses name their exception after the standard
+        reason phrase (``400`` → ``BadRequestError``); the same pair
+        reuses its class across operations, while the same status with
+        a different model gets a numbered name.
+
+        :param status: the normalized response key
+        :param model: the error model's class name
+        :return: the (claimed) exception class name
+        """
+        key = (status, model)
+        name = self._error_names.get(key)
+        if name is None:
+            stem = _RANGE_ERROR_NAMES.get(status)
+            if stem is None:
+                try:
+                    # the enum member names are stable across Python
+                    # versions (unlike the phrases)
+                    stem = class_name(HTTPStatus(int(status)).name)
+                except ValueError:
+                    stem = f"Status{status}"
+            name = self._class_names.claim(f"{stem}Error")
+            self._error_names[key] = name
+        return name
 
     # ------------------------------------------------------------------
     # security

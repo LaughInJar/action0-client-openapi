@@ -18,9 +18,14 @@ from action0.client import query
 from action0.req import Method
 from action0.req import Response
 
+from .errors import BadRequestError
+from .errors import DefaultError
+from .errors import NotFoundError
+from .errors import decode_error
 from .models import CreateTokenResponse
 from .models import Pet
 from .models import create_token_response_from_json
+from .models import error_from_json
 from .models import pet_from_json
 
 
@@ -35,6 +40,23 @@ class ListPets(JsonOperation[list[Pet]]):
     limit: int = query(default=20)
     tags: list[str] | None = query(default=None, serialize=lambda values: ",".join(values))
     x_request_id: uuid.UUID | None = header("X-Request-Id", default=None, serialize=str)
+
+    def check(self, response: Response) -> None:
+        """
+        :param response: the response the backend produced
+        :raises DefaultError: for the documented default error answer
+        :raises APIError: for any other non-2xx status
+        """
+        if not response.is_success:
+            data = decode_error(response)
+            if isinstance(data, dict):
+                message = f"{type(self).__name__}: unexpected status {response.status}"
+                raise DefaultError(
+                    f"{message} {response.phrase}".rstrip(),
+                    response=response,
+                    error=error_from_json(data),
+                )
+        super().check(response)
 
     def load_json(self, data: Any) -> list[Pet]:
         """
@@ -54,6 +76,23 @@ class CreatePet(JsonOperation[Pet]):
     name: str = json_field()
     tag: str | None = json_field(default=None)
 
+    def check(self, response: Response) -> None:
+        """
+        :param response: the response the backend produced
+        :raises BadRequestError: for the documented ``400`` answer
+        :raises APIError: for any other non-2xx status
+        """
+        if response.status == 400:
+            data = decode_error(response)
+            if isinstance(data, dict):
+                message = f"{type(self).__name__}: unexpected status {response.status}"
+                raise BadRequestError(
+                    f"{message} {response.phrase}".rstrip(),
+                    response=response,
+                    error=error_from_json(data),
+                )
+        super().check(response)
+
     def load_json(self, data: Any) -> Pet:
         """
         :param data: the decoded JSON payload
@@ -71,6 +110,23 @@ class GetPet(JsonOperation[Pet]):
 
     #: The identifier of the pet to operate on.
     pet_id: int = path_param()
+
+    def check(self, response: Response) -> None:
+        """
+        :param response: the response the backend produced
+        :raises NotFoundError: for the documented ``404`` answer
+        :raises APIError: for any other non-2xx status
+        """
+        if response.status == 404:
+            data = decode_error(response)
+            if isinstance(data, dict):
+                message = f"{type(self).__name__}: unexpected status {response.status}"
+                raise NotFoundError(
+                    f"{message} {response.phrase}".rstrip(),
+                    response=response,
+                    error=error_from_json(data),
+                )
+        super().check(response)
 
     def load_json(self, data: Any) -> Pet:
         """

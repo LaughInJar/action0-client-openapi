@@ -107,6 +107,39 @@ class GetInventory(JsonOperation[dict[str, int]]):
         return cast(dict[str, int], data)
 ```
 
+## Error responses — `errors.py`
+
+Documented 4xx/5xx (or `4XX`/`5XX`/`default`) responses with a JSON
+object schema become typed exceptions: one
+`action0.client.APIError` subclass per (status, error model) pair,
+named after the status, carrying the parsed payload as `.error`. The
+operation overrides `check` to raise them; an error body that is not a
+JSON object falls through to the plain `APIError`:
+
+```python
+class NotFoundError(APIError):
+    """Raised for the documented ``404`` answer, parsed into a :py:class:`Error`."""
+
+    def __init__(self, message: str, *, response: Response, error: Error) -> None: ...
+```
+
+```python
+class GetPet(JsonOperation[Pet]):
+    ...
+
+    def check(self, response: Response) -> None:
+        if response.status == 404:
+            data = decode_error(response)
+            if isinstance(data, dict):
+                message = f"{type(self).__name__}: unexpected status {response.status}"
+                raise NotFoundError(
+                    f"{message} {response.phrase}".rstrip(),
+                    response=response,
+                    error=error_from_json(data),
+                )
+        super().check(response)
+```
+
 ## The client — `client.py`
 
 The security schemes become constructor credentials; an
@@ -145,8 +178,20 @@ pet = await client.send(GetPet(pet_id=42))  # Awaitable[Pet]
 ```
 
 Non-2xx responses raise `action0.client.APIError` with the request and
-response attached; transport problems arrive as `TransportError` /
-`TimeoutError` — see the [action0-client error
+response attached — a *documented* error status raises the generated
+subclass from `errors.py` with the parsed payload on top:
+
+```python
+from petstore_client import NotFoundError
+
+try:
+    pet = client.send(GetPet(pet_id=999))
+except NotFoundError as error:  # the documented 404, parsed
+    print(error.error.code, error.error.message)
+```
+
+Transport problems arrive as `TransportError` / `TimeoutError` — see
+the [action0-client error
 guide](https://laughinjar.github.io/action0-client/usage/errors.html).
 
 ## Testing your integration

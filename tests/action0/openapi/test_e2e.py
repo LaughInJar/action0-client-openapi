@@ -161,13 +161,49 @@ class EndToEndTestCase(unittest.TestCase):
         client = self.client(json_response(200, {"on-sale": 3, "sold": 7}))
         self.assertEqual(client.send(self.petstore.GetInventory()), {"on-sale": 3, "sold": 7})
 
-    def test_error_status_raises(self) -> None:
+    def test_documented_error_raises_typed_exception(self) -> None:
         """
-        Test that non-2xx statuses raise APIError with the response.
+        Test that a documented error status raises the generated
+        exception carrying the parsed error model (still an APIError).
         """
-        client = self.client(json_response(404, {"message": "no such pet"}))
-        with self.assertRaises(APIError) as caught:
+        client = self.client(json_response(404, {"code": 404, "message": "no such pet"}))
+        with self.assertRaises(self.petstore.NotFoundError) as caught:
             client.send(self.petstore.GetPet(pet_id=999))
+        self.assertIsInstance(caught.exception, APIError)
+        error = caught.exception.error
+        self.assertIsInstance(error, self.petstore.Error)
+        self.assertEqual(error.message, "no such pet")
+        self.assertEqual(error.code, 404)
         response = caught.exception.response
         assert response is not None
         self.assertEqual(response.status, 404)
+
+    def test_default_error_response_covers_any_status(self) -> None:
+        """
+        Test that a ``default`` error response catches every non-2xx
+        status of its operation.
+        """
+        client = self.client(json_response(503, {"code": 1, "message": "down"}))
+        with self.assertRaises(self.petstore.DefaultError) as caught:
+            client.send(self.petstore.ListPets())
+        self.assertEqual(caught.exception.error.message, "down")
+
+    def test_unparsable_error_body_falls_back_to_plain_apierror(self) -> None:
+        """
+        Test that a documented status with a non-JSON body still raises,
+        as the plain APIError.
+        """
+        client = self.client(Response(404, body=b"<html>gone</html>"))
+        with self.assertRaises(APIError) as caught:
+            client.send(self.petstore.GetPet(pet_id=999))
+        self.assertNotIsInstance(caught.exception, self.petstore.NotFoundError)
+
+    def test_undocumented_error_status_raises_plain_apierror(self) -> None:
+        """
+        Test that a status without a documented error response keeps
+        the base behavior (GetPet documents only 404).
+        """
+        client = self.client(json_response(500, {"code": 1, "message": "boom"}))
+        with self.assertRaises(APIError) as caught:
+            client.send(self.petstore.GetPet(pet_id=999))
+        self.assertNotIsInstance(caught.exception, self.petstore.NotFoundError)

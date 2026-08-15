@@ -29,6 +29,7 @@ from .ir import Body
 from .ir import BodyKind
 from .ir import EnumModel
 from .ir import EnumType
+from .ir import ErrorCase
 from .ir import Field
 from .ir import MapType
 from .ir import Model
@@ -62,6 +63,7 @@ __all__ = [
     "Documents",
     "EnumModel",
     "EnumType",
+    "ErrorCase",
     "Field",
     "MapType",
     "Model",

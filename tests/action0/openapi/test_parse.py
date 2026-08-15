@@ -7,6 +7,7 @@ from action0.openapi import ArrayType
 from action0.openapi import BodyKind
 from action0.openapi import EnumModel
 from action0.openapi import EnumType
+from action0.openapi import ErrorCase
 from action0.openapi import MapType
 from action0.openapi import Model
 from action0.openapi import ModelType
@@ -97,6 +98,7 @@ class PetstoreTestCase(unittest.TestCase):
                 "Pet",
                 "Animal",
                 "HealthRecord",
+                "Error",
                 "CreateTokenResponse",
             ],
         )
@@ -464,6 +466,153 @@ class ServerFallbackTestCase(unittest.TestCase):
         api = parse_api(minimal(paths={"/things": {"get": self.operation()}}))
         self.assertIsNone(api.base_url)
         self.assertEqual(api.warnings, ())
+
+
+class ErrorResponsesTestCase(unittest.TestCase):
+    """
+    tests for the translation of documented non-2xx responses into
+    typed exceptions
+    """
+
+    def parse_with_responses(self, responses: dict[str, Any]) -> Api:
+        """
+        Parse a document with one GET operation and the given responses.
+
+        :param responses: the operation's responses node
+        :return: the parsed IR
+        """
+        return parse_api(
+            minimal(
+                paths={"/things": {"get": {"operationId": "getThing", "responses": responses}}}
+            )
+        )
+
+    def error_response(self) -> dict[str, Any]:
+        """
+        Build an error response node with an inline object schema.
+
+        :return: the response node
+        """
+        return {
+            "description": "went wrong",
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["reason"],
+                        "properties": {"reason": {"type": "string"}},
+                    }
+                }
+            },
+        }
+
+    def test_status_ranges_and_order(self) -> None:
+        """
+        Test the case order (concrete, ranges, default) and the
+        exception naming per response key.
+        """
+        api = self.parse_with_responses(
+            {
+                "200": {"description": "ok"},
+                "default": self.error_response(),
+                "5XX": self.error_response(),
+                "404": self.error_response(),
+                "400": self.error_response(),
+            }
+        )
+        cases = api.operations[0].errors
+        self.assertEqual(
+            [(case.status, case.exception) for case in cases],
+            [
+                ("400", "BadRequestError"),
+                ("404", "NotFoundError"),
+                ("5XX", "ServerError"),
+                ("default", "DefaultError"),
+            ],
+        )
+        self.assertEqual(cases[0].description, "went wrong")
+
+    def test_shared_component_shares_the_exception(self) -> None:
+        """
+        Test that two operations documenting the same status with the
+        same $ref'd model share one exception class.
+        """
+        api = parse_api(
+            minimal(
+                components={
+                    "schemas": {
+                        "Problem": {
+                            "type": "object",
+                            "properties": {"detail": {"type": "string"}},
+                        }
+                    }
+                },
+                paths={
+                    "/a": {
+                        "get": {
+                            "operationId": "getA",
+                            "responses": {
+                                "400": {
+                                    "description": "bad",
+                                    "content": {
+                                        "application/json": {
+                                            "schema": {"$ref": "#/components/schemas/Problem"}
+                                        }
+                                    },
+                                }
+                            },
+                        }
+                    },
+                    "/b": {
+                        "get": {
+                            "operationId": "getB",
+                            "responses": {
+                                "400": {
+                                    "description": "bad",
+                                    "content": {
+                                        "application/json": {
+                                            "schema": {"$ref": "#/components/schemas/Problem"}
+                                        }
+                                    },
+                                }
+                            },
+                        }
+                    },
+                },
+            )
+        )
+        first, second = (operation.errors[0] for operation in api.operations)
+        self.assertEqual(first, ErrorCase("400", "BadRequestError", "Problem", "bad"))
+        self.assertEqual(first, second)
+
+    def test_unknown_status_gets_a_numbered_name(self) -> None:
+        """
+        Test that a status outside the standard set falls back to a
+        Status<code> name.
+        """
+        api = self.parse_with_responses({"599": self.error_response()})
+        self.assertEqual(api.operations[0].errors[0].exception, "Status599Error")
+
+    def test_untypable_error_responses_are_skipped(self) -> None:
+        """
+        Test that responses without JSON content or without an object
+        schema stay with the plain APIError.
+        """
+        api = self.parse_with_responses(
+            {
+                "404": {"description": "gone"},
+                "409": {"description": "raw", "content": {"text/plain": {"schema": {}}}},
+                "422": {
+                    "description": "list-shaped",
+                    "content": {
+                        "application/json": {
+                            "schema": {"type": "array", "items": {"type": "string"}}
+                        }
+                    },
+                },
+            }
+        )
+        self.assertEqual(api.operations[0].errors, ())
 
 
 class JoinedParameterTestCase(unittest.TestCase):

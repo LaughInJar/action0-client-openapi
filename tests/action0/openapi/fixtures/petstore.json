@@ -73,6 +73,16 @@
                                 }
                             }
                         }
+                    },
+                    "default": {
+                        "description": "an unexpected error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
                     }
                 }
             },
@@ -113,6 +123,16 @@
                                 }
                             }
                         }
+                    },
+                    "400": {
+                        "description": "the pet is invalid",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -141,6 +161,16 @@
                             "application/json": {
                                 "schema": {
                                     "$ref": "#/components/schemas/Pet"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "no pet with this id",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
                                 }
                             }
                         }
@@ -488,6 +518,23 @@
                 "additionalProperties": {
                     "type": "number",
                     "description": "Measured values by name (weight, temperature, ...)."
+                }
+            },
+            "Error": {
+                "type": "object",
+                "description": "One API error answer.",
+                "required": [
+                    "code",
+                    "message"
+                ],
+                "properties": {
+                    "code": {
+                        "type": "integer",
+                        "description": "The API's own error code."
+                    },
+                    "message": {
+                        "type": "string"
+                    }
                 }
             }
         },

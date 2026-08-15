@@ -208,6 +208,28 @@ def health_record_from_json(data: Any) -> HealthRecord:
 
 
 @dataclass
+class Error:
+    """One API error answer."""
+
+    #: The API's own error code.
+    code: int
+    message: str
+
+
+def error_from_json(data: Any) -> Error:
+    """
+    Build a :py:class:`Error` from one decoded JSON object.
+
+    :param data: the decoded JSON object
+    :return: the Error
+    """
+    return Error(
+        code=data["code"],
+        message=data["message"],
+    )
+
+
+@dataclass
 class CreateTokenResponse:
     """The ``CreateTokenResponse`` model."""
 

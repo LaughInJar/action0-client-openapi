@@ -46,6 +46,12 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Pet'
+        default:
+          description: an unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
     post:
       operationId: createPet
       tags:
@@ -71,6 +77,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Pet'
+        '400':
+          description: the pet is invalid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /pets/{petId}:
     parameters:
     - name: petId
@@ -90,6 +102,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Pet'
+        '404':
+          description: no pet with this id
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
     put:
       operationId: replacePet
       tags:
@@ -309,6 +327,18 @@ components:
       additionalProperties:
         type: number
         description: Measured values by name (weight, temperature, ...).
+    Error:
+      type: object
+      description: One API error answer.
+      required:
+      - code
+      - message
+      properties:
+        code:
+          type: integer
+          description: The API's own error code.
+        message:
+          type: string
   securitySchemes:
     BearerAuth:
       type: http

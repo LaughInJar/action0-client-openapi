@@ -24,6 +24,7 @@ from .ir import Body
 from .ir import BodyKind
 from .ir import EnumModel
 from .ir import EnumType
+from .ir import ErrorCase
 from .ir import Field
 from .ir import MapType
 from .ir import Model
@@ -822,6 +823,8 @@ def _render_operation(
             lines.write(line)
     if operation.body is not None:
         _render_body_fields(operation.body, lines, imports, enum_members)
+    if operation.errors:
+        _render_check(operation, lines, imports)
     _render_load(operation, result, lines, imports)
     lines.dedent()
 
@@ -1090,6 +1093,190 @@ def _import_converters(t: TypeExpr, imports: Imports) -> None:
             pass
 
 
+def _error_classes(api: Api) -> list[ErrorCase]:
+    """
+    The distinct generated exception classes, in first-use order.
+
+    Operations documenting the same status with the same error model
+    share one exception class — this collects each once.
+
+    :param api: the intermediate representation
+    :return: one representative case per exception class
+    """
+    classes: dict[str, ErrorCase] = {}
+    for operation in api.operations:
+        for case in operation.errors:
+            classes.setdefault(case.exception, case)
+    return list(classes.values())
+
+
+def render_errors(api: Api, header: str) -> str:
+    """
+    Render the ``errors.py`` module: the JSON decoding helper and one
+    :py:class:`~action0.client.errors.APIError` subclass per documented
+    (status, error model) pair.
+
+    :param api: the intermediate representation (with at least one
+        operation carrying error cases)
+    :param header: the generated-by header comment line (without ``#``)
+    :return: the module's source text
+    """
+    lines = Lines()
+    lines.write(f"# {header}")
+    lines.docstring("Typed exceptions for the documented error responses.")
+    body = Lines()
+    imports = Imports()
+    imports.add(
+        "from __future__ import annotations",
+        "import json",
+        "from typing import Any",
+        "from action0.client import APIError",
+        "from action0.req import Response",
+    )
+    body.separate()
+    _render_decode_error(body)
+    for case in _error_classes(api):
+        imports.add(f"from .models import {case.model}")
+        body.separate()
+        _render_error_class(case, body)
+    imports.render(lines)
+    lines.separate()
+    lines.extend(body)
+    return lines.text()
+
+
+def _render_decode_error(lines: Lines) -> None:
+    """
+    Render the shared JSON decoding helper of the error path.
+
+    :param lines: the module builder
+    """
+    lines.write("def decode_error(response: Response) -> Any:")
+    lines.indent()
+    lines.docstring(
+        "Decode an error response body as JSON.\n"
+        "\n"
+        ":param response: the non-2xx response\n"
+        ":return: the decoded payload, or ``None`` when the body is\n"
+        "    empty or not valid JSON"
+    )
+    lines.write("text = response.body_str()")
+    lines.write("if text is None or not text.strip():")
+    lines.indent()
+    lines.write("return None")
+    lines.dedent()
+    lines.write("try:")
+    lines.indent()
+    lines.write("return json.loads(text)")
+    lines.dedent()
+    lines.write("except ValueError:")
+    lines.indent()
+    lines.write("return None")
+    lines.dedent()
+    lines.dedent()
+
+
+#: the docstring wording of an error class, per response-key shape
+_ERROR_STATUS_TEXT = {
+    "4XX": "a documented ``4XX``-range answer",
+    "5XX": "a documented ``5XX``-range answer",
+    "default": "the documented default error answer",
+}
+
+
+def _error_status_text(status: str) -> str:
+    """
+    Describe one error response key for docstrings.
+
+    :param status: the normalized response key
+    :return: the description text
+    """
+    return _ERROR_STATUS_TEXT.get(status, f"the documented ``{status}`` answer")
+
+
+def _render_error_class(case: ErrorCase, lines: Lines) -> None:
+    """
+    Render one generated exception class.
+
+    :param case: a representative error case of the class
+    :param lines: the module builder
+    """
+    for line in _class_lines(case.exception, "APIError", lines.level):
+        lines.write(line)
+    lines.indent()
+    lines.docstring(
+        f"Raised for {_error_status_text(case.status)}, parsed into a :py:class:`{case.model}`."
+    )
+    lines.write()
+    parameters = ["self", "message: str", "*", "response: Response", f"error: {case.model}"]
+    for line in _def_lines("__init__", parameters, "None", lines.level):
+        lines.write(line)
+    lines.indent()
+    lines.docstring(
+        ":param message: a human-readable description of the failure\n"
+        ":param response: the offending response\n"
+        ":param error: the parsed error payload"
+    )
+    lines.write("super().__init__(message, request=response.request, response=response)")
+    lines.write("self.error = error")
+    lines.write('"""The parsed error payload."""')
+    lines.dedent()
+    lines.dedent()
+
+
+#: the status condition of one error case in the generated ``check``
+_ERROR_CONDITIONS = {
+    "4XX": "400 <= response.status <= 499",
+    "5XX": "500 <= response.status <= 599",
+    "default": "not response.is_success",
+}
+
+
+def _render_check(operation: OperationIR, lines: Lines, imports: Imports) -> None:
+    """
+    Render the ``check`` override raising the typed exceptions.
+
+    Each case decodes the body and raises its exception only when the
+    payload is a JSON object — anything else falls through to the base
+    class's plain :py:class:`~action0.client.errors.APIError`.
+
+    :param operation: the operation (with error cases)
+    :param lines: the module builder
+    :param imports: the module's import collector
+    """
+    imports.add("from action0.req import Response", "from .errors import decode_error")
+    lines.separate(1)
+    lines.write("def check(self, response: Response) -> None:")
+    lines.indent()
+    documentation = ":param response: the response the backend produced\n"
+    for case in operation.errors:
+        documentation += f":raises {case.exception}: for {_error_status_text(case.status)}\n"
+    documentation += ":raises APIError: for any other non-2xx status"
+    lines.docstring(documentation)
+    for case in operation.errors:
+        imports.add(f"from .errors import {case.exception}")
+        imports.add(f"from .models import {converter_name(case.model)}")
+        condition = _ERROR_CONDITIONS.get(case.status, f"response.status == {case.status}")
+        lines.write(f"if {condition}:")
+        lines.indent()
+        lines.write("data = decode_error(response)")
+        lines.write("if isinstance(data, dict):")
+        lines.indent()
+        lines.write('message = f"{type(self).__name__}: unexpected status {response.status}"')
+        lines.write(f"raise {case.exception}(")
+        lines.indent()
+        lines.write('f"{message} {response.phrase}".rstrip(),')
+        lines.write("response=response,")
+        for line in _wrapped("error=", f"{converter_name(case.model)}(data)", None, lines.level):
+            lines.write(line)
+        lines.dedent()
+        lines.write(")")
+        lines.dedent()
+        lines.dedent()
+    lines.write("super().check(response)")
+    lines.dedent()
+
+
 def render_client(api: Api, header: str, client_name: str) -> str:
     """
     Render the ``client.py`` module: the API client subclass with the
@@ -1273,6 +1460,9 @@ def render_init(
         module = (operation_modules or {}).get(operation.class_name, "operations")
         imports.add(f"from .{module} import {operation.class_name}")
         names.append(operation.class_name)
+    for case in _error_classes(api):
+        imports.add(f"from .errors import {case.exception}")
+        names.append(case.exception)
     imports.render(lines)
     lines.separate(1)
     lines.write("__all__ = [")

@@ -70,7 +70,7 @@ class GeneratePackageTestCase(unittest.TestCase):
         """
         self.assertEqual(
             sorted(generate_fixture()),
-            ["__init__.py", "client.py", "models.py", "operations.py", "py.typed"],
+            ["__init__.py", "client.py", "errors.py", "models.py", "operations.py", "py.typed"],
         )
 
     def test_matches_golden(self) -> None:
@@ -111,6 +111,7 @@ class SplitByTagTestCase(unittest.TestCase):
             [
                 "__init__.py",
                 "client.py",
+                "errors.py",
                 "models.py",
                 "operations.py",
                 "operations_auth.py",
