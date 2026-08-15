@@ -233,15 +233,18 @@ class _Parser:
         The common inheritance pattern — a ``$ref`` to the base plus an
         object with the extra properties — merges by uniting the parts'
         ``properties`` and ``required`` (properties defined by the node
-        itself, next to ``allOf``, count as one more part). Conflicting
-        definitions of the same property and non-object subschemas are
-        outside the supported subset.
+        itself, next to ``allOf``, count as one more part). When several
+        parts define the same property, the last definition wins — in
+        the base-then-specialization idiom (weather.gov narrows generic
+        GeoJSON ``features`` to alert features this way) the later part
+        is the narrower one — with a warning when the definitions
+        differ. Non-object subschemas are outside the supported subset.
 
         :param node: the schema node with the ``allOf`` keyword
         :param where: the schema location, for error messages
         :return: the merged object schema, and whether any part was
             nullable
-        :raises SchemaError: on non-object or conflicting subschemas
+        :raises SchemaError: on non-object subschemas
         """
         properties: dict[str, Any] = {}
         required: list[str] = []
@@ -272,11 +275,11 @@ class _Parser:
                 )
             for name, prop in (part.get("properties") or {}).items():
                 if name in properties and properties[name] != prop:
-                    raise SchemaError(
+                    self._warnings.append(
                         f"{where}: the allOf subschemas define the property {name!r}"
-                        " differently — flatten the schema"
+                        " differently — the later definition overrides the earlier one"
                     )
-                properties.setdefault(name, prop)
+                properties[name] = prop
             for name in part.get("required") or ():
                 if name not in required:
                     required.append(name)

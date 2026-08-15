@@ -629,20 +629,32 @@ class EdgeCaseTestCase(unittest.TestCase):
         assert isinstance(box, Model)
         self.assertEqual([field.name for field in box.fields], ["a", "b"])
 
-    def test_allof_conflicting_property_rejected(self) -> None:
+    def test_allof_conflicting_property_later_wins(self) -> None:
         """
-        Test that parts disagreeing about a property are rejected.
+        Test that when parts disagree about a property, the later
+        definition wins with a warning (the base-then-specialization
+        idiom: weather.gov narrows generic GeoJSON ``features`` to
+        alert features this way).
         """
-        with self.assertRaisesRegex(SchemaError, "'a' differently"):
-            self.parse_component(
-                "Box",
-                {
-                    "allOf": [
-                        {"type": "object", "properties": {"a": {"type": "string"}}},
-                        {"type": "object", "properties": {"a": {"type": "integer"}}},
-                    ]
-                },
-            )
+        api = self.parse_component(
+            "Box",
+            {
+                "allOf": [
+                    {"type": "object", "properties": {"a": {"type": "string"}}},
+                    {"type": "object", "properties": {"a": {"type": "integer"}}},
+                ]
+            },
+        )
+        model = api.models[0]
+        assert isinstance(model, Model)
+        self.assertEqual(model.fields[0].type, ScalarType(Scalar.INT))
+        self.assertEqual(
+            [warning for warning in api.warnings if "allOf" in warning],
+            [
+                "components.schemas.Box: the allOf subschemas define the property 'a'"
+                " differently — the later definition overrides the earlier one"
+            ],
+        )
 
     def test_allof_non_object_part_rejected(self) -> None:
         """
