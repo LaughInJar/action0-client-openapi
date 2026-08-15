@@ -25,7 +25,7 @@ schema location; lesser omissions are reported as warnings.
 | `discriminator` (with or without `mapping`) | tag dispatch in the union's converter; members without a mapping entry use their component name, the spec's implicit convention |
 | 3.1 multi-type arrays (`type: ["string", "integer"]`) | a union of the bare types |
 | `allOf` with exactly one subschema | unwrapped |
-| `allOf` of object schemas (the base-plus-extension inheritance pattern) | flattened into one model: `properties` and `required` united, recursively; properties next to `allOf` count too |
+| `allOf` of object schemas (the base-plus-extension inheritance pattern) | flattened into one model: `properties` and `required` united, recursively; properties next to `allOf` count too; when subschemas define the same property differently, the later definition wins (the base-then-specialization idiom), with a warning |
 | `description` on a component | the class docstring (a `#:` doc-comment on a union's type alias) |
 | `description` on a property | a `#:` doc-comment above the dataclass field (Sphinx autodoc reads those); looked up through a `$ref` if the property is one |
 
