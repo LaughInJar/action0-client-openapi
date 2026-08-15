@@ -31,6 +31,28 @@ class ClassNameTestCase(unittest.TestCase):
         self.assertEqual(class_name("HTTPError"), "HttpError")
         self.assertEqual(class_name("APIKey"), "ApiKey")
 
+    def test_pluralized_acronyms(self) -> None:
+        """
+        Test that a pluralized acronym keeps its trailing ``s`` (at
+        least two capitals — a single one reads as a capitalized word).
+        """
+        self.assertEqual(class_name("APIs.guru"), "ApisGuru")
+        self.assertEqual(class_name("listIDs"), "ListIds")
+        self.assertEqual(class_name("APIsURL"), "ApisUrl")
+        # a lone capital before "s" is a word, not a plural acronym
+        self.assertEqual(class_name("Rs232Port"), "Rs232Port")
+        # "s" then more lowercase is an ordinary capitalized word
+        self.assertEqual(class_name("AsyncAPI"), "AsyncApi")
+
+    def test_accents_are_dropped(self) -> None:
+        """
+        Test that accented letters lose their accents instead of
+        splitting the word; other non-ASCII still separates.
+        """
+        self.assertEqual(class_name("PokéAPI"), "PokeApi")
+        self.assertEqual(class_name("Zürich Wetter"), "ZurichWetter")
+        self.assertEqual(class_name("日本-api"), "Api")
+
     def test_digits(self) -> None:
         """
         Test digit handling: inside names kept, leading prefixed.
@@ -57,6 +79,14 @@ class FieldNameTestCase(unittest.TestCase):
         self.assertEqual(field_name("petId"), "pet_id")
         self.assertEqual(field_name("pet-id"), "pet_id")
         self.assertEqual(field_name("X-API-Key"), "x_api_key")
+
+    def test_pluralized_acronyms_and_accents(self) -> None:
+        """
+        Test that plural acronyms and accented letters stay one word.
+        """
+        self.assertEqual(field_name("numAPIs"), "num_apis")
+        self.assertEqual(field_name("preferredMediaTypes"), "preferred_media_types")
+        self.assertEqual(field_name("Poké-Ball"), "poke_ball")
 
     def test_keywords_get_a_trailing_underscore(self) -> None:
         """
