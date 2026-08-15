@@ -889,6 +889,11 @@ def _render_load(operation: OperationIR, result: str, lines: Lines, imports: Imp
         lines.indent()
         lines.docstring(":param data: the decoded JSON payload\n:return: the parsed result")
         expression = converter_expr(operation.response_type, "data")
+        if expression == "data" and result != "Any":
+            # nothing to convert, but the decoded payload is typed Any —
+            # returning it as-is would fail mypy strict (no-any-return)
+            imports.add("from typing import cast")
+            expression = f"cast({result}, data)"
         for line in _return_lines(expression, lines.level):
             lines.write(line)
         lines.dedent()

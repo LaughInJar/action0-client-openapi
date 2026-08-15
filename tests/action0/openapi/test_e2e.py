@@ -152,6 +152,14 @@ class EndToEndTestCase(unittest.TestCase):
         client = self.client(Response(200, body=b"\x89PNG"))
         self.assertEqual(client.send(self.petstore.GetPetPhoto(pet_id=7)), b"\x89PNG")
 
+    def test_untyped_json_response(self) -> None:
+        """
+        Test GetInventory: a JSON result needing no conversion comes
+        back as the decoded payload.
+        """
+        client = self.client(json_response(200, {"on-sale": 3, "sold": 7}))
+        self.assertEqual(client.send(self.petstore.GetInventory()), {"on-sale": 3, "sold": 7})
+
     def test_error_status_raises(self) -> None:
         """
         Test that non-2xx statuses raise APIError with the response.

@@ -60,7 +60,22 @@ class GetPet(JsonOperation[Pet]):
 ```
 
 A `204` endpoint subclasses `Operation[None]`, a non-JSON response
-`Operation[bytes]`.
+`Operation[bytes]`. A JSON result that needs no conversion — a plain
+scalar, or an object without typed properties like an
+`additionalProperties: integer` inventory — is returned through
+`typing.cast`, since handing the decoded `Any` back as-is would fail
+mypy strict:
+
+```python
+class GetInventory(JsonOperation[dict[str, int]]):
+    """``GET /store/inventory`` — Returns pet quantities by status."""
+
+    method = Method.GET
+    path = "/store/inventory"
+
+    def load_json(self, data: Any) -> dict[str, int]:
+        return cast(dict[str, int], data)
+```
 
 ## The client — `client.py`
 

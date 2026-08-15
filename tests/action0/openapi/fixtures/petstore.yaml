@@ -148,6 +148,20 @@ paths:
               schema:
                 type: string
                 format: binary
+  /store/inventory:
+    get:
+      operationId: getInventory
+      summary: Returns pet quantities by status.
+      responses:
+        '200':
+          description: the inventory
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: integer
+                  format: int32
   /oauth/token:
     post:
       operationId: createToken

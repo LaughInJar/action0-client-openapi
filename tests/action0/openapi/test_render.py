@@ -10,7 +10,10 @@ from typing import Any
 from action0.openapi import Api
 from action0.openapi import EnumModel
 from action0.openapi import Field
+from action0.openapi import MapType
 from action0.openapi import Model
+from action0.openapi import OperationIR
+from action0.openapi import ResponseKind
 from action0.openapi import Scalar
 from action0.openapi import ScalarType
 from action0.openapi import load_schema
@@ -20,6 +23,7 @@ from action0.openapi.generate import write_package
 from action0.openapi.render import Imports
 from action0.openapi.render import Lines
 from action0.openapi.render import render_models
+from action0.openapi.render import render_operations
 
 FIXTURES = Path(__file__).parent / "fixtures"
 GOLDEN = Path(__file__).parent / "golden" / "petstore_client"
@@ -239,6 +243,54 @@ class RenderModelsTestCase(unittest.TestCase):
         """
         expected = (GOLDEN / "models.py").read_text(encoding="utf-8")
         self.assertEqual(normalized(render_fixture()), normalized(expected))
+
+
+class RenderOperationsTestCase(unittest.TestCase):
+    """
+    tests for :py:func:`action0.openapi.render.render_operations`
+    """
+
+    def operation_module(self, response_type: Any) -> str:
+        """
+        Render a module with one GET operation of the given JSON result.
+
+        :param response_type: the response's IR type
+        :return: the module text
+        """
+        api = Api(
+            title="T",
+            version="1",
+            operations=(
+                OperationIR(
+                    class_name="GetThing",
+                    method="GET",
+                    path_template="/thing",
+                    wire_path="/thing",
+                    response_kind=ResponseKind.MODEL,
+                    response_type=response_type,
+                ),
+            ),
+        )
+        return render_operations(api, "h")
+
+    def test_unconverted_json_result_is_cast(self) -> None:
+        """
+        Test that a JSON result needing no conversion is returned
+        through typing.cast — plain ``return data`` would fail mypy
+        strict's no-any-return.
+        """
+        text = self.operation_module(MapType(ScalarType(Scalar.INT)))
+        self.assertIn("from typing import cast", text)
+        self.assertIn("        return cast(dict[str, int], data)\n", text)
+
+    def test_any_json_result_needs_no_cast(self) -> None:
+        """
+        Test that an ``Any`` result stays a plain return — there is
+        nothing to cast to.
+        """
+        text = self.operation_module(ScalarType(Scalar.ANY))
+        self.assertIn("        return data\n", text)
+        self.assertNotIn("cast", text)
 
 
 class GoldenBehaviorTestCase(unittest.TestCase):
