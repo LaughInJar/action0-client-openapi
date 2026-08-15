@@ -36,6 +36,36 @@ class Pet:
 def pet_from_json(data: Any) -> Pet: ...
 ```
 
+A schema combining `properties` with `additionalProperties` gets a
+*catch-all* field: the converter collects every payload key outside the
+declared properties into a dict typed after the `additionalProperties`
+schema — APIs answering with dynamic keys (Open-Meteo's ensemble member
+variables, for example) stay fully typed:
+
+```python
+@dataclass
+class HealthRecord:
+    """One veterinary examination of a pet."""
+
+    clinic: str
+    #: The day of the examination. Null when it is not recorded.
+    examined_on: datetime.date | None = None
+    notes: str | None = None
+    #: Measured values by name (weight, temperature, ...).
+    additional_properties: dict[str, float] | None = None
+
+
+# payload keys outside this set land in additional_properties
+_HEALTH_RECORD_PROPERTIES = {"clinic", "examinedOn", "notes"}
+
+
+def health_record_from_json(data: Any) -> HealthRecord: ...
+```
+
+The catch-all is a parse-side feature: serialized into a JSON request
+body, the model would send it as a nested `additional_properties`
+object, not flattened — leave it `None` there.
+
 ## Operations — `operations.py`
 
 One class per endpoint, method and path fixed per class, parameters and

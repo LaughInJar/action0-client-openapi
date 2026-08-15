@@ -483,6 +483,10 @@
                     "notes": {
                         "type": "string"
                     }
+                },
+                "additionalProperties": {
+                    "type": "number",
+                    "description": "Measured values by name (weight, temperature, ...)."
                 }
             }
         },

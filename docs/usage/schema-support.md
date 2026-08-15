@@ -18,6 +18,7 @@ schema location; lesser omissions are reported as warnings.
 | `type: array` | `list[...]` (missing `items` means `list[Any]`) |
 | object with `properties` | a generated dataclass model |
 | object with only `additionalProperties: <schema>` | `dict[str, ...]` |
+| object with `properties` *and* `additionalProperties` | a model with a typed catch-all field (`additional_properties: dict[str, ...] \| None`) collecting the payload keys outside the declared properties |
 | object without properties, or an empty schema | `dict[str, Any]` / `Any` |
 | unrecognized `type` (e.g. `""` in broken generated specs) | `Any`, with a warning |
 | 3.0 `nullable: true`, 3.1 `type: [T, "null"]`, `oneOf`/`anyOf` of one type and `null` | `... \| None` |
@@ -34,6 +35,14 @@ rendered with a `= None` default — optional or nullable ones — move
 behind the default-less fields, as plain dataclasses require. A
 required-but-nullable property therefore reads `... | None = None`,
 but its converter still expects the key in the payload.
+
+The catch-all field is filled when *parsing*: the converter collects
+every payload key outside the declared properties (APIs answering with
+dynamic keys, like Open-Meteo's ensemble member variables, stay fully
+usable). It has no counterpart on the request side — a model serialized
+into a JSON body sends the catch-all as a nested object, not flattened,
+so leave it `None` there; a request *body schema* combining
+`properties` with `additionalProperties` is reported as a warning.
 
 Union members must be recognizable in a decoded payload — by JSON type
 (a `string \| object` union), by the `discriminator` tag, or by a
@@ -133,6 +142,4 @@ to pass those credentials yourself (default headers or an
 - Per-status response typing beyond the picked 2xx (other 2xx responses
   still pass the check and are parsed with the same converter), and
   typed error payloads for 4xx/5xx.
-- `properties` combined with `additionalProperties` (the extra keys are
-  dropped, with a warning), Swagger 2.0 documents, `callbacks`, `links`
-  and `webhooks`.
+- Swagger 2.0 documents, `callbacks`, `links` and `webhooks`.

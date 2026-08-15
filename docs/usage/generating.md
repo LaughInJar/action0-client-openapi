@@ -53,7 +53,7 @@ re-exports everything either way, so user imports —
 `from petstore_client import ListPets` — do not depend on the layout.
 
 Constructs the generator flattens or skips (an unsupported security
-scheme, `additionalProperties` next to `properties`, ...) are reported
+scheme, several request media types, ...) are reported
 as warnings on stderr; constructs outside the supported subset stop the
 run with an error naming the schema location — {doc}`schema-support`
 lists both categories.

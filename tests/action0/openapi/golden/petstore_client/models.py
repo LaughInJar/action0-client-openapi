@@ -178,6 +178,12 @@ class HealthRecord:
     #: The day of the examination. Null when it is not recorded.
     examined_on: datetime.date | None = None
     notes: str | None = None
+    #: Measured values by name (weight, temperature, ...).
+    additional_properties: dict[str, float] | None = None
+
+
+# payload keys outside this set land in additional_properties
+_HEALTH_RECORD_PROPERTIES = {"clinic", "examinedOn", "notes"}
 
 
 def health_record_from_json(data: Any) -> HealthRecord:
@@ -195,6 +201,9 @@ def health_record_from_json(data: Any) -> HealthRecord:
             else None
         ),
         notes=data.get("notes"),
+        additional_properties=(
+            {key: value for key, value in data.items() if key not in _HEALTH_RECORD_PROPERTIES}
+        ),
     )
 
 

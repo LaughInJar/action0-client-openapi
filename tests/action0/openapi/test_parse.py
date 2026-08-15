@@ -118,6 +118,21 @@ class PetstoreTestCase(unittest.TestCase):
         self.assertTrue(by_name["clinic"].required)
         self.assertFalse(by_name["clinic"].nullable)
 
+    def test_health_record_catch_all(self) -> None:
+        """
+        Test that additionalProperties next to properties becomes the
+        catch-all field, typed after the additionalProperties schema.
+        """
+        record = self.model("HealthRecord")
+        field = record.additional_field
+        assert field is not None
+        self.assertEqual(field.name, "additional_properties")
+        self.assertEqual(field.type, MapType(ScalarType(Scalar.FLOAT)))
+        self.assertFalse(field.required)
+        self.assertEqual(field.description, "Measured values by name (weight, temperature, ...).")
+        # models without additionalProperties have no catch-all
+        self.assertIsNone(self.model("Pet").additional_field)
+
     def test_enum(self) -> None:
         """
         Test the PetStatus enum: base, members, dash handling.
@@ -393,6 +408,101 @@ class EdgeCaseTestCase(unittest.TestCase):
                 " — generated as an untyped value",
                 "components.schemas.Box.properties.tag: unknown schema type 'file'"
                 " — generated as an untyped value",
+            ],
+        )
+
+    def test_additional_properties_true_catch_all(self) -> None:
+        """
+        Test that ``additionalProperties: true`` next to properties
+        yields an untyped catch-all with the default description.
+        """
+        api = self.parse_component(
+            "Box",
+            {
+                "type": "object",
+                "properties": {"label": {"type": "string"}},
+                "additionalProperties": True,
+            },
+        )
+        model = api.models[0]
+        assert isinstance(model, Model)
+        field = model.additional_field
+        assert field is not None
+        self.assertEqual(field.type, MapType(ScalarType(Scalar.ANY)))
+        self.assertEqual(field.description, "The payload keys not declared under properties.")
+        self.assertEqual(api.warnings, ())
+
+    def test_additional_properties_false_means_no_catch_all(self) -> None:
+        """
+        Test that ``additionalProperties: false`` declares no extras.
+        """
+        api = self.parse_component(
+            "Box",
+            {
+                "type": "object",
+                "properties": {"label": {"type": "string"}},
+                "additionalProperties": False,
+            },
+        )
+        model = api.models[0]
+        assert isinstance(model, Model)
+        self.assertIsNone(model.additional_field)
+
+    def test_additional_properties_name_collision(self) -> None:
+        """
+        Test that a declared ``additional_properties`` property keeps
+        its name and the catch-all gets a numbered one.
+        """
+        api = self.parse_component(
+            "Box",
+            {
+                "type": "object",
+                "properties": {"additional_properties": {"type": "string"}},
+                "additionalProperties": {"type": "integer"},
+            },
+        )
+        model = api.models[0]
+        assert isinstance(model, Model)
+        self.assertEqual(model.fields[0].name, "additional_properties")
+        field = model.additional_field
+        assert field is not None
+        self.assertEqual(field.name, "additional_properties2")
+
+    def test_additional_properties_in_request_body_warns(self) -> None:
+        """
+        Test that an inline JSON body combining properties with
+        additionalProperties warns: body fields have nowhere to send
+        the extra keys.
+        """
+        api = parse_api(
+            minimal(
+                paths={
+                    "/things": {
+                        "post": {
+                            "operationId": "createThing",
+                            "requestBody": {
+                                "required": True,
+                                "content": {
+                                    "application/json": {
+                                        "schema": {
+                                            "type": "object",
+                                            "properties": {"label": {"type": "string"}},
+                                            "additionalProperties": {"type": "string"},
+                                        }
+                                    }
+                                },
+                            },
+                            "responses": {"204": {"description": "created"}},
+                        }
+                    }
+                }
+            )
+        )
+        self.assertEqual(
+            [warning for warning in api.warnings if "additionalProperties" in warning],
+            [
+                "paths./things.post.requestBody: additionalProperties of a request body"
+                " are not sent — only the declared properties become fields"
             ],
         )
 
