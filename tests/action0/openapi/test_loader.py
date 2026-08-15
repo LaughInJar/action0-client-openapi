@@ -7,15 +7,16 @@ from typing import Any
 from unittest import mock
 
 from action0.openapi import SchemaError
+from action0.openapi import load_documents
 from action0.openapi import load_schema
 
 #: a minimal valid OpenAPI document
 MINIMAL = {"openapi": "3.1.0", "info": {"title": "t", "version": "1"}, "paths": {}}
 
 
-class LoadSchemaTestCase(unittest.TestCase):
+class SchemaDirTestCase(unittest.TestCase):
     """
-    tests for :py:func:`action0.openapi.loader.load_schema`
+    base class holding a temporary directory to write schema files into
     """
 
     def setUp(self) -> None:
@@ -44,6 +45,12 @@ class LoadSchemaTestCase(unittest.TestCase):
         :return: the file's path
         """
         return self.write(name, json.dumps(document))
+
+
+class LoadSchemaTestCase(SchemaDirTestCase):
+    """
+    tests for :py:func:`action0.openapi.loader.load_schema`
+    """
 
     def test_json_file(self) -> None:
         """
@@ -153,3 +160,95 @@ class LoadSchemaTestCase(unittest.TestCase):
             with self.subTest(version=version):
                 path = self.write_json("api.json", {"openapi": version})
                 self.assertEqual(load_schema(path)["openapi"], version)
+
+
+class LoadDocumentsTestCase(SchemaDirTestCase):
+    """
+    tests for :py:func:`action0.openapi.loader.load_documents`
+    """
+
+    def test_referenced_files_load_recursively(self) -> None:
+        """
+        Test that referenced files load, across formats, with the
+        canonical root key, and that fragments need no openapi field.
+        """
+        root = dict(MINIMAL)
+        root["components"] = {
+            "schemas": {"Pet": {"$ref": "./parts/animals.yaml#/components/schemas/Animal"}}
+        }
+        (self.tmp / "parts").mkdir()
+        self.write(
+            "parts/animals.yaml",
+            "components:\n"
+            "  schemas:\n"
+            "    Animal:\n"
+            "      $ref: './shared.json#/components/schemas/Id'\n",
+        )
+        self.write_json(
+            "parts/shared.json",
+            {"components": {"schemas": {"Id": {"type": "integer"}}}},
+        )
+        path = self.write_json("api.json", root)
+        loaded = load_documents(path)
+        self.assertEqual(loaded.root, str(path.resolve()))
+        self.assertEqual(len(loaded.files), 3)
+        shared_key = str((self.tmp / "parts" / "shared.json").resolve())
+        self.assertEqual(
+            loaded.files[shared_key],
+            {"components": {"schemas": {"Id": {"type": "integer"}}}},
+        )
+
+    def test_single_file_document(self) -> None:
+        """
+        Test that a schema without file references loads alone.
+        """
+        loaded = load_documents(self.write_json("api.json", MINIMAL))
+        self.assertEqual(list(loaded.files.values()), [MINIMAL])
+
+    def test_circular_file_references_load_once(self) -> None:
+        """
+        Test that files referencing each other load exactly once each.
+        """
+        a = dict(MINIMAL)
+        a["components"] = {"schemas": {"A": {"$ref": "./b.json#/components/schemas/B"}}}
+        self.write_json(
+            "b.json",
+            {"components": {"schemas": {"B": {"$ref": "./a.json#/components/schemas/A"}}}},
+        )
+        loaded = load_documents(self.write_json("a.json", a))
+        self.assertEqual(len(loaded.files), 2)
+
+    def test_missing_referenced_file(self) -> None:
+        """
+        Test that a missing referenced file names the referrer too.
+        """
+        root = dict(MINIMAL)
+        root["components"] = {"schemas": {"X": {"$ref": "./gone.yaml#/components/schemas/X"}}}
+        path = self.write_json("api.json", root)
+        with self.assertRaisesRegex(
+            SchemaError, r"api\.json: cannot read the referenced schema file.*gone\.yaml"
+        ):
+            load_documents(path)
+
+    def test_non_object_fragment(self) -> None:
+        """
+        Test that a referenced file with a non-object top level is
+        rejected.
+        """
+        root = dict(MINIMAL)
+        root["components"] = {"schemas": {"X": {"$ref": "./list.json#/0"}}}
+        self.write("list.json", "[1, 2]")
+        with self.assertRaisesRegex(SchemaError, r"list\.json.*must be a JSON/YAML object"):
+            load_documents(self.write_json("api.json", root))
+
+    def test_http_reference_rejected(self) -> None:
+        """
+        Test that http(s) references stop the load with the download
+        message.
+        """
+        root = dict(MINIMAL)
+        root["components"] = {
+            "schemas": {"X": {"$ref": "https://example.com/x.yaml#/components/schemas/X"}}
+        }
+        with self.assertRaisesRegex(SchemaError, "not downloaded"):
+            load_documents(self.write_json("api.json", root))

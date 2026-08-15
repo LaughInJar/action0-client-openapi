@@ -1,8 +1,9 @@
 """
 The ``action0-openapi`` command line interface.
 
-One command: read an OpenAPI 3.x schema file, generate the client
-package, write it into the output directory. Expected input problems
+One command: read an OpenAPI 3.x schema file (following references to
+other local files), generate the client package, write it into the
+output directory. Expected input problems
 (:py:class:`~action0.openapi.errors.SchemaError`, an existing output
 without ``--force``) are printed as one-line errors without a
 traceback; translation warnings go to stderr, the written files to
@@ -15,12 +16,13 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from .bundle import bundle_documents
 from .errors import SchemaError
 from .generate import default_client_name
 from .generate import default_package_name
 from .generate import generate_package
 from .generate import write_package
-from .loader import load_schema
+from .loader import load_documents
 from .parse import parse_api
 
 
@@ -96,7 +98,8 @@ def main(argv: "Sequence[str] | None" = None) -> int:
     """
     arguments = _parser().parse_args(argv)
     try:
-        api = parse_api(load_schema(arguments.schema))
+        document, bundle_warnings = bundle_documents(load_documents(arguments.schema))
+        api = parse_api(document)
         if arguments.base_url:
             api = dataclasses.replace(api, base_url=arguments.base_url)
         package_name = arguments.package_name or default_package_name(api.title)
@@ -111,7 +114,7 @@ def main(argv: "Sequence[str] | None" = None) -> int:
     except (SchemaError, FileExistsError) as error:
         print(f"action0-openapi: error: {error}", file=sys.stderr)
         return 1
-    for warning in api.warnings:
+    for warning in [*bundle_warnings, *api.warnings]:
         print(f"action0-openapi: warning: {warning}", file=sys.stderr)
     for path in written:
         print(path)

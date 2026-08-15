@@ -1,0 +1,10 @@
+# a whole-file schema: the document root is the schema itself
+type: object
+required:
+- x
+- y
+properties:
+  x:
+    type: number
+  y:
+    type: number

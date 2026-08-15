@@ -1,0 +1,60 @@
+openapi: 3.0.3
+info:
+  title: Zoo
+  version: 1.0.0
+paths:
+  /animals:
+    get:
+      operationId: listAnimals
+      parameters:
+      - $ref: './components/animals.yaml#/components/parameters/limit'
+      responses:
+        '200':
+          description: the animals
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: './components/animals.yaml#/components/schemas/Animal'
+  /tags:
+    get:
+      operationId: listTags
+      responses:
+        '200':
+          description: the tags
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Tag'
+components:
+  schemas:
+    Tag:
+      type: object
+      required:
+      - label
+      properties:
+        label:
+          type: string
+        location:
+          $ref: './components/point.yaml'
+    Exhibit:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+        star:
+          $ref: './components/animals.yaml#/components/schemas/Animal'
+    Money:
+      type: object
+      required:
+      - amount
+      properties:
+        amount:
+          type: number
+        currency:
+          type: string

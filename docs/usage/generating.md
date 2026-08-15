@@ -26,8 +26,11 @@ action0-openapi petstore.yaml -o src/ \
     --base-url https://zoo.example.com/v1
 ```
 
-YAML schemas need the `yaml` extra ({doc}`installation`). Existing
-files are never overwritten unless you pass `--force`.
+YAML schemas need the `yaml` extra ({doc}`installation`). Schemas
+split over several files (`$ref: './components/geo.yaml#/...'`) are
+loaded and bundled automatically — {doc}`schema-support` describes the
+merge rules. Existing files are never overwritten unless you pass
+`--force`.
 
 For large APIs, `--split-by-tag` puts each OpenAPI tag's operations
 into a module of its own (`operations_pets.py`, `operations_auth.py`,
@@ -53,9 +56,15 @@ The same pipeline is available as a library — one function per stage:
 ```python
 from pathlib import Path
 
-from action0.openapi import generate_package, load_schema, parse_api, write_package
+from action0.openapi import bundle_documents, generate_package, load_documents
+from action0.openapi import parse_api, write_package
 
-api = parse_api(load_schema("petstore.json"))
+document, warnings = bundle_documents(load_documents("petstore.json"))
+api = parse_api(document)
 files = generate_package(api, client_name="PetstoreClient", schema_name="petstore.json")
 write_package(files, Path("src/petstore_client"))
 ```
+
+(For a schema that is known to be a single file, `load_schema` reads it
+without following references, and its result can go straight into
+`parse_api`.)
