@@ -28,6 +28,8 @@ class ListPets(JsonOperation[list[Pet]]):
     method = Method.GET
     path = "/pets"
 
+    #: How many pets to return at most. The server caps this at 100; anything above is silently
+    #: reduced to the first hundred matches.
     limit: int = query(default=20)
     tags: list[str] | None = query(default=None)
     x_request_id: uuid.UUID | None = header("X-Request-Id", default=None, serialize=str)
@@ -46,6 +48,7 @@ class CreatePet(JsonOperation[Pet]):
     method = Method.POST
     path = "/pets"
 
+    #: The pet's display name.
     name: str = json_field()
     tag: str | None = json_field(default=None)
 
@@ -64,6 +67,7 @@ class GetPet(JsonOperation[Pet]):
     path = "/pets/{pet_id}"
     # the schema spells the path "/pets/{petId}"
 
+    #: The identifier of the pet to operate on.
     pet_id: int = path_param()
 
     def load_json(self, data: Any) -> Pet:
@@ -81,7 +85,9 @@ class ReplacePet(JsonOperation[Pet]):
     path = "/pets/{pet_id}"
     # the schema spells the path "/pets/{petId}"
 
+    #: The identifier of the pet to operate on.
     pet_id: int = path_param()
+    #: One pet of the store.
     payload: Pet = json_body()
 
     def load_json(self, data: Any) -> Pet:
@@ -99,6 +105,7 @@ class DeletePet(Operation[None]):
     path = "/pets/{pet_id}"
     # the schema spells the path "/pets/{petId}"
 
+    #: The identifier of the pet to operate on.
     pet_id: int = path_param()
 
     def load(self, response: Response) -> None:
@@ -132,6 +139,7 @@ class CreateToken(JsonOperation[CreateTokenResponse]):
     method = Method.POST
     path = "/oauth/token"
 
+    #: The OAuth grant type.
     grant_type: str = form_field()
     scope: str | None = form_field(default=None)
 

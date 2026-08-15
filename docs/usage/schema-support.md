@@ -25,6 +25,8 @@ schema location; lesser omissions are reported as warnings.
 | 3.1 multi-type arrays (`type: ["string", "integer"]`) | a union of the bare types |
 | `allOf` with exactly one subschema | unwrapped |
 | `allOf` of object schemas (the base-plus-extension inheritance pattern) | flattened into one model: `properties` and `required` united, recursively; properties next to `allOf` count too |
+| `description` on a component | the class docstring (a `#:` doc-comment on a union's type alias) |
+| `description` on a property | a `#:` doc-comment above the dataclass field (Sphinx autodoc reads those); looked up through a `$ref` if the property is one |
 
 Union members must be recognizable in a decoded payload — by JSON type
 (a `string \| object` union), by the `discriminator` tag, or by a
@@ -56,6 +58,8 @@ operations get a trailing underscore.
 | lowest documented 2xx response with JSON content | the operation's typed result |
 | `204` (or 2xx without content) | `Operation[None]` |
 | 2xx with only non-JSON content | `Operation[bytes]` |
+| operation `summary` / `description` | the operation class docstring |
+| `description` on a parameter or body property | a `#:` doc-comment above the field |
 
 Operation classes are named after the `operationId` (`listPets` →
 `ListPets`), falling back to method + path (`GET /pets/{petId}` →

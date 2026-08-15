@@ -14,6 +14,7 @@ conversions are wrapped the way ruff format wraps them).
 from __future__ import annotations
 
 import json
+import textwrap
 from collections.abc import Mapping
 from collections.abc import Sequence
 
@@ -99,6 +100,24 @@ class Lines:
         while self._lines and self._lines[-1] == "":
             self._lines.pop()
         self._lines.extend([""] * blank_lines)
+
+    def comment(self, text: str) -> None:
+        """
+        Append a ``#:`` documentation comment at the current indentation.
+
+        Sphinx autodoc reads consecutive ``#:`` lines above an attribute
+        as its documentation. Each line of the text is wrapped to the
+        line-length limit; blank lines are dropped (they would render as
+        stray empty comments between fields).
+
+        :param text: the comment text
+        """
+        width = _LINE_LIMIT - self._level * 4 - len("#: ")
+        for raw_line in text.splitlines():
+            for line in textwrap.wrap(
+                raw_line.strip(), width=width, break_long_words=False, break_on_hyphens=False
+            ):
+                self.write(f"#: {line}")
 
     def docstring(self, text: str) -> None:
         """
@@ -261,7 +280,7 @@ def _render_union(model: UnionModel, lines: Lines, imports: Imports) -> None:
     for member in model.members:
         imports.add(*imports_for(member))
     if model.description:
-        lines.write(f"#: {model.description}")
+        lines.comment(model.description)
     alias = " | ".join(annotation(member) for member in model.members)
     # the string form keeps the alias independent of definition order
     lines.write(f'{model.name}: TypeAlias = "{alias}"')
@@ -327,6 +346,8 @@ def _render_model(model: Model, lines: Lines, imports: Imports) -> None:
         optional = not field.required or field.nullable
         rendered = annotation(field.type, optional=optional)
         default = " = None" if optional else ""
+        if field.description:
+            lines.comment(field.description)
         lines.write(f"{field.name}: {rendered}{default}")
     lines.dedent()
 
@@ -512,6 +533,8 @@ def _render_operation(
     for param in operation.params:
         specifier = _SPECIFIERS[param.location]
         rename = param.wire_name if param.location is not ParamLocation.PATH else None
+        if param.description:
+            lines.comment(param.description)
         lines.write(_field_line(param, specifier, rename, enum_members, imports))
     if operation.body is not None:
         _render_body_fields(operation.body, lines, imports, enum_members)
@@ -555,11 +578,15 @@ def _render_body_fields(
     """
     if body.kind is BodyKind.JSON_BODY:
         (field,) = body.fields
+        if field.description:
+            lines.comment(field.description)
         lines.write(_field_line(field, "json_body", None, enum_members, imports))
         return
     specifier = "json_field" if body.kind is BodyKind.JSON_FIELDS else "form_field"
     for field in body.fields:
         rename = field.wire_name if field.wire_name != field.name else None
+        if field.description:
+            lines.comment(field.description)
         lines.write(_field_line(field, specifier, rename, enum_members, imports))
 
 

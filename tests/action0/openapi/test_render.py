@@ -76,6 +76,28 @@ class LinesTestCase(unittest.TestCase):
         lines.write("b = 2")
         self.assertEqual(lines.text(), "a = 1\n\n\nb = 2\n")
 
+    def test_comments(self) -> None:
+        """
+        Test ``#:`` doc-comments: wrapping to the line limit at the
+        current indentation, blank lines dropped, unbreakable tokens
+        kept whole.
+        """
+        lines = Lines()
+        lines.indent()
+        lines.comment("Short.")
+        lines.comment("First paragraph.\n\nSecond paragraph.")
+        lines.comment("word " * 30)
+        for line in lines.text().splitlines():
+            self.assertLessEqual(len(line), 99)
+        self.assertEqual(
+            lines.text().splitlines()[:3],
+            ["    #: Short.", "    #: First paragraph.", "    #: Second paragraph."],
+        )
+        unbreakable = Lines()
+        unbreakable.comment("https://example.com/" + "x" * 120)
+        (line,) = unbreakable.text().splitlines()
+        self.assertEqual(line, "#: https://example.com/" + "x" * 120)
+
     def test_docstrings(self) -> None:
         """
         Test one-line and block docstrings, and quote defusing.
@@ -179,6 +201,33 @@ class RenderModelsTestCase(unittest.TestCase):
             ),
         )
         self.assertIn('at=datetime.datetime.fromisoformat(data["at"]),', render_models(api, "h"))
+
+    def test_field_description_becomes_comment(self) -> None:
+        """
+        Test that a field's schema description renders as a ``#:``
+        doc-comment directly above the field.
+        """
+        api = Api(
+            title="T",
+            version="1",
+            models=(
+                Model(
+                    name="Pet",
+                    fields=(
+                        Field(
+                            name="id",
+                            wire_name="id",
+                            type=ScalarType(Scalar.INT),
+                            required=True,
+                            description="The pet's unique identifier.",
+                        ),
+                    ),
+                ),
+            ),
+        )
+        self.assertIn(
+            "    #: The pet's unique identifier.\n    id: int\n", render_models(api, "h")
+        )
 
     def test_matches_golden(self) -> None:
         """
