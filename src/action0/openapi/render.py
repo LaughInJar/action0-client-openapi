@@ -246,7 +246,8 @@ def _render_enum(model: EnumModel, lines: Lines, imports: Imports) -> None:
     :param imports: the module's import collector
     """
     imports.add("import enum")
-    lines.write(f"class {model.name}(enum.Enum):")
+    for line in _class_lines(model.name, "enum.Enum", lines.level):
+        lines.write(line)
     lines.indent()
     lines.docstring(model.description or f"The ``{model.name}`` values.")
     lines.write()
@@ -283,12 +284,14 @@ def _render_union(model: UnionModel, lines: Lines, imports: Imports) -> None:
         lines.comment(model.description)
     alias = " | ".join(annotation(member) for member in model.members)
     # the string form keeps the alias independent of definition order
-    lines.write(f'{model.name}: TypeAlias = "{alias}"')
+    for line in _annotated_lines(model.name, "TypeAlias", f'"{alias}"', lines.level):
+        lines.write(line)
     if not needs_conversion(UnionType(model.name, model.members)):
         return
     imports.add("from typing import Any")
     lines.separate()
-    lines.write(f"def {converter_name(model.name)}(data: Any) -> {model.name}:")
+    for line in _def_lines(converter_name(model.name), ["data: Any"], model.name, lines.level):
+        lines.write(line)
     lines.indent()
     lines.docstring(
         f"Build a :py:data:`{model.name}` member from one decoded JSON value.\n"
@@ -303,7 +306,8 @@ def _render_union(model: UnionModel, lines: Lines, imports: Imports) -> None:
     for case in model.cases:
         lines.write(f"if {_union_condition(case, model.discriminator, guarded)}:")
         lines.indent()
-        lines.write(f"return {converter_expr(case.member, 'data')}")
+        for line in _return_lines(converter_expr(case.member, "data"), lines.level):
+            lines.write(line)
         lines.dedent()
     lines.write(f'raise ValueError("the payload matches no member of {model.name}")')
     lines.dedent()
@@ -345,10 +349,11 @@ def _render_model(model: Model, lines: Lines, imports: Imports) -> None:
         imports.add(*imports_for(field.type))
         optional = not field.required or field.nullable
         rendered = annotation(field.type, optional=optional)
-        default = " = None" if optional else ""
         if field.description:
             lines.comment(field.description)
-        lines.write(f"{field.name}: {rendered}{default}")
+        default = "None" if optional else None
+        for line in _annotated_lines(field.name, rendered, default, lines.level):
+            lines.write(line)
     lines.dedent()
 
 
@@ -361,7 +366,8 @@ def _render_converter(model: Model, lines: Lines, imports: Imports) -> None:
     :param imports: the module's import collector
     """
     imports.add("from typing import Any")
-    lines.write(f"def {converter_name(model.name)}(data: Any) -> {model.name}:")
+    for line in _def_lines(converter_name(model.name), ["data: Any"], model.name, lines.level):
+        lines.write(line)
     lines.indent()
     lines.docstring(
         f"Build a :py:class:`{model.name}` from one decoded JSON object.\n"
@@ -406,6 +412,17 @@ def _field_conversion(field: Field, level: int) -> list[str]:
     return _wrapped(f"{field.name}=", converted, f"{check} is not None", level)
 
 
+def _fits(text: str, level: int) -> bool:
+    """
+    Whether a line fits the column limit at an indentation level.
+
+    :param text: the line's text, without the indentation
+    :param level: the indentation level
+    :return: whether the indented line stays within the limit
+    """
+    return level * 4 + len(text) <= _LINE_LIMIT
+
+
 def _wrapped(prefix: str, expression: str, condition: str | None, level: int) -> list[str]:
     """
     Lay out ``prefix<expression> if <condition> else None,`` within the
@@ -418,20 +435,177 @@ def _wrapped(prefix: str, expression: str, condition: str | None, level: int) ->
     :return: the laid-out lines, relative to ``level``
     """
     guarded = f"{expression} if {condition} else None" if condition else expression
-    if level * 4 + len(prefix) + len(guarded) + 1 <= _LINE_LIMIT:
+    if _fits(f"{prefix}{guarded},", level):
         return [f"{prefix}{guarded},"]
     # over the limit: parenthesize like ruff format — the whole
     # expression on its own (deeper indented) line if it fits there,
-    # a conditional split before "if" and "else" otherwise
-    if (level + 1) * 4 + len(guarded) <= _LINE_LIMIT or not condition:
-        return [f"{prefix}(", f"    {guarded}", "),"]
+    # a conditional split before "if" and "else" otherwise; an
+    # expression still over the limit is split further where possible
+    if _fits(guarded, level + 1) or not condition:
+        expression_lines = _expression_lines(guarded, level + 1)
+        return [f"{prefix}(", *(f"    {line}" for line in expression_lines), "),"]
     return [
         f"{prefix}(",
-        f"    {expression}",
+        *(f"    {line}" for line in _expression_lines(expression, level + 1)),
         f"    if {condition}",
         "    else None",
         "),",
     ]
+
+
+def _expression_lines(expression: str, level: int) -> list[str]:
+    """
+    Lay out one expression within the line limit.
+
+    An over-long comprehension is opened up the way ruff format opens
+    it: bracket, element (split recursively), ``for`` clause, closing
+    bracket. Anything else over the limit is left on one line — the
+    conversion grammar (see :py:func:`action0.openapi.types.converter_expr`)
+    has nothing shorter to offer then.
+
+    :param expression: the expression text
+    :param level: the indentation level the lines are written at
+    :return: the laid-out lines, relative to ``level``
+    """
+    if _fits(expression, level):
+        return [expression]
+    split = _split_comprehension(expression)
+    if split is None:
+        return [expression]
+    opener, element, clause = split
+    return [
+        opener,
+        *(f"    {line}" for line in _expression_lines(element, level + 1)),
+        f"    {clause}",
+        "]" if opener == "[" else "}",
+    ]
+
+
+def _split_comprehension(expression: str) -> tuple[str, str, str] | None:
+    """
+    Split a comprehension into bracket, element and ``for`` clause.
+
+    :param expression: the expression text
+    :return: the opening bracket, the element expression and the
+        ``for ...`` clause — or ``None`` when the expression is not a
+        comprehension
+    """
+    if not expression or expression[0] not in "[{":
+        return None
+    # find the top-level " for " inside the outer bracket; skip over
+    # nested brackets and (double-quoted, json.dumps-produced) strings
+    depth = 0
+    in_string = False
+    index = 0
+    while index < len(expression):
+        char = expression[index]
+        if in_string:
+            if char == "\\":
+                index += 1
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        elif depth == 1 and expression.startswith(" for ", index):
+            return expression[0], expression[1:index], expression[index + 1 : -1]
+        index += 1
+    return None
+
+
+def _return_lines(expression: str, level: int) -> list[str]:
+    """
+    Lay out a ``return <expression>`` statement within the line limit.
+
+    :param expression: the returned expression
+    :param level: the indentation level the lines are written at
+    :return: the laid-out lines, relative to ``level``
+    """
+    statement = f"return {expression}"
+    if _fits(statement, level):
+        return [statement]
+    split = _split_comprehension(expression)
+    if split is None:
+        return [statement]
+    opener, element, clause = split
+    return [
+        f"return {opener}",
+        *(f"    {line}" for line in _expression_lines(element, level + 1)),
+        f"    {clause}",
+        "]" if opener == "[" else "}",
+    ]
+
+
+def _class_lines(name: str, base: str, level: int) -> list[str]:
+    """
+    Lay out a ``class`` header within the line limit.
+
+    Over the limit, the base class moves onto its own line, the way
+    ruff format wraps it.
+
+    :param name: the class name
+    :param base: the base class text
+    :param level: the indentation level the lines are written at
+    :return: the laid-out lines, relative to ``level``
+    """
+    header = f"class {name}({base}):"
+    if _fits(header, level):
+        return [header]
+    return [f"class {name}(", f"    {base}", "):"]
+
+
+def _def_lines(name: str, parameters: list[str], returns: str, level: int) -> list[str]:
+    """
+    Lay out a ``def`` header within the line limit.
+
+    An over-long header is split the way ruff format splits it: several
+    parameters go on one shared line when they fit, otherwise (and for
+    a single parameter, always) each gets its own line with a trailing
+    comma.
+
+    :param name: the function name
+    :param parameters: the parameter declarations
+    :param returns: the return annotation
+    :param level: the indentation level the lines are written at
+    :return: the laid-out lines, relative to ``level``
+    """
+    joined = ", ".join(parameters)
+    header = f"def {name}({joined}) -> {returns}:"
+    if _fits(header, level):
+        return [header]
+    if len(parameters) > 1 and _fits(joined, level + 1):
+        body = [f"    {joined}"]
+    else:
+        body = [f"    {parameter}," for parameter in parameters]
+    return [f"def {name}(", *body, f") -> {returns}:"]
+
+
+def _annotated_lines(name: str, annotation: str, value: str | None, level: int) -> list[str]:
+    """
+    Lay out an annotated assignment (no call on the right-hand side)
+    within the line limit.
+
+    Over the limit, ruff format first parenthesizes the value, then the
+    annotation; a plain annotation without value has nothing to split
+    and stays over-long.
+
+    :param name: the target name
+    :param annotation: the annotation text
+    :param value: the assigned value expression, if any
+    :param level: the indentation level the lines are written at
+    :return: the laid-out lines, relative to ``level``
+    """
+    line = f"{name}: {annotation}" + (f" = {value}" if value is not None else "")
+    if value is None or _fits(line, level):
+        return [line]
+    if _fits(f"{name}: {annotation} = (", level) and _fits(value, level + 1):
+        return [f"{name}: {annotation} = (", f"    {value}", ")"]
+    if _fits(annotation, level + 1) and _fits(f") = {value}", level):
+        return [f"{name}: (", f"    {annotation}", f") = {value}"]
+    return [line]
 
 
 def _literal(value: object) -> str:
@@ -517,7 +691,8 @@ def _render_operation(
     :param enum_members: the enum default lookup
     """
     base, result = _operation_base(operation, imports)
-    lines.write(f"class {operation.class_name}({base}):")
+    for line in _class_lines(operation.class_name, base, lines.level):
+        lines.write(line)
     lines.indent()
     title = f"``{operation.method} {operation.wire_path}``"
     if operation.summary:
@@ -535,7 +710,8 @@ def _render_operation(
         rename = param.wire_name if param.location is not ParamLocation.PATH else None
         if param.description:
             lines.comment(param.description)
-        lines.write(_field_line(param, specifier, rename, enum_members, imports))
+        for line in _field_lines(param, specifier, rename, enum_members, imports, lines.level):
+            lines.write(line)
     if operation.body is not None:
         _render_body_fields(operation.body, lines, imports, enum_members)
     _render_load(operation, result, lines, imports)
@@ -580,38 +756,49 @@ def _render_body_fields(
         (field,) = body.fields
         if field.description:
             lines.comment(field.description)
-        lines.write(_field_line(field, "json_body", None, enum_members, imports))
+        for line in _field_lines(field, "json_body", None, enum_members, imports, lines.level):
+            lines.write(line)
         return
     if body.kind is BodyKind.RAW_BODY:
         (field,) = body.fields
         if field.description:
             lines.comment(field.description)
-        lines.write(_field_line(field, "body", None, enum_members, imports))
+        for line in _field_lines(field, "body", None, enum_members, imports, lines.level):
+            lines.write(line)
         return
     specifier = "json_field" if body.kind is BodyKind.JSON_FIELDS else "form_field"
     for field in body.fields:
         rename = field.wire_name if field.wire_name != field.name else None
         if field.description:
             lines.comment(field.description)
-        lines.write(_field_line(field, specifier, rename, enum_members, imports))
+        for line in _field_lines(field, specifier, rename, enum_members, imports, lines.level):
+            lines.write(line)
 
 
-def _field_line(
+def _field_lines(
     field: Field | Param,
     specifier: str,
     rename: str | None,
     enum_members: dict[str, dict[object, str]],
     imports: Imports,
-) -> str:
+    level: int,
+) -> list[str]:
     """
     Render one operation field with its specifier.
+
+    An over-long field is laid out the way ruff format lays it out: the
+    specifier call's arguments move one line deeper when the head still
+    fits, otherwise the whole call is parenthesized, otherwise the
+    annotation is — and when nothing fits, the arguments split anyway,
+    over-long (ruff format leaves such lines alone too).
 
     :param field: the field or parameter
     :param specifier: the specifier function name
     :param rename: the wire name to pass positionally, if it differs
     :param enum_members: the enum default lookup
     :param imports: the module's import collector
-    :return: the field's source line
+    :param level: the indentation level the lines are written at
+    :return: the field's source lines, relative to ``level``
     """
     imports.add(f"from action0.client import {specifier}")
     imports.add(*imports_for(field.type))
@@ -628,7 +815,20 @@ def _field_line(
         arguments.append(serialize)
     optional = field.nullable or (not field.required and default == "None")
     rendered = annotation(field.type, optional=optional)
-    return f"{field.name}: {rendered} = {specifier}({', '.join(arguments)})"
+    joined = ", ".join(arguments)
+    call = f"{specifier}({joined})"
+    line = f"{field.name}: {rendered} = {call}"
+    if _fits(line, level) or not arguments:
+        return [line]
+    head = f"{field.name}: {rendered} = {specifier}("
+    if not _fits(head, level):
+        if _fits(f"{field.name}: {rendered} = (", level) and _fits(call, level + 1):
+            return [f"{field.name}: {rendered} = (", f"    {call}", ")"]
+        if _fits(rendered, level + 1) and _fits(f") = {call}", level):
+            return [f"{field.name}: (", f"    {rendered}", f") = {call}"]
+    if len(arguments) == 1 or _fits(joined, level + 1):
+        return [head, f"    {joined}", ")"]
+    return [head, *(f"    {argument}," for argument in arguments), ")"]
 
 
 def _default_literal(field: Field | Param, enum_members: dict[str, dict[object, str]]) -> str:
@@ -677,19 +877,24 @@ def _render_load(operation: OperationIR, result: str, lines: Lines, imports: Imp
     :param lines: the module builder
     :param imports: the module's import collector
     """
-    lines.write()
+    # separate() rather than write(): a field-less operation already
+    # has the blank line after its method/path block
+    lines.separate(1)
     if operation.response_kind is ResponseKind.MODEL:
         assert operation.response_type is not None
         imports.add("from typing import Any")
         _import_converters(operation.response_type, imports)
-        lines.write(f"def load_json(self, data: Any) -> {result}:")
+        for line in _def_lines("load_json", ["self", "data: Any"], result, lines.level):
+            lines.write(line)
         lines.indent()
         lines.docstring(":param data: the decoded JSON payload\n:return: the parsed result")
         expression = converter_expr(operation.response_type, "data")
-        lines.write(f"return {expression}")
+        for line in _return_lines(expression, lines.level):
+            lines.write(line)
         lines.dedent()
         return
-    lines.write(f"def load(self, response: Response) -> {result}:")
+    for line in _def_lines("load", ["self", "response: Response"], result, lines.level):
+        lines.write(line)
     lines.indent()
     lines.docstring(":param response: the checked response\n:return: the parsed result")
     if operation.response_kind is ResponseKind.NONE:
@@ -758,7 +963,8 @@ def render_client(api: Api, header: str, client_name: str) -> str:
         imports.add("import base64")
     if query_schemes:
         imports.add("from action0.req import Request")
-    body.write(f"class {client_name}(APIClient[BackendT_co]):")
+    for line in _class_lines(client_name, "APIClient[BackendT_co]", body.level):
+        body.write(line)
     body.indent()
     body.docstring(f"The {api.title} API client.")
     body.write()

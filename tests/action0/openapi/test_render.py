@@ -2,6 +2,7 @@ import datetime
 import re
 import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,8 @@ from action0.openapi import Scalar
 from action0.openapi import ScalarType
 from action0.openapi import load_schema
 from action0.openapi import parse_api
+from action0.openapi.generate import generate_package
+from action0.openapi.generate import write_package
 from action0.openapi.render import Imports
 from action0.openapi.render import Lines
 from action0.openapi.render import render_models
@@ -340,3 +343,217 @@ class GoldenToolchainTestCase(unittest.TestCase):
         Test that ruff check (incl. import sorting) passes.
         """
         self.ruff("check")
+
+
+class WrappingTestCase(unittest.TestCase):
+    """
+    tests that over-long constructs are laid out exactly as ruff format
+    lays them out (the longnames fixture's names are sized to overflow
+    the 99-column limit in every supported spot)
+    """
+
+    files: dict[str, str]
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        api = parse_api(load_schema(FIXTURES / "longnames.json"))
+        cls.files = generate_package(
+            api, client_name="LongnamesClient", schema_name="longnames.json"
+        )
+
+    def test_converter_def_wraps(self) -> None:
+        """
+        Test that an over-long converter signature explodes its one
+        parameter with a trailing comma.
+        """
+        self.assertIn(
+            "def modelwithanextremelylonggeneratedpythonclassnameforwrapping_from_json(\n"
+            "    data: Any,\n"
+            ") -> Modelwithanextremelylonggeneratedpythonclassnameforwrapping:\n",
+            self.files["models.py"],
+        )
+
+    def test_comprehension_splits(self) -> None:
+        """
+        Test that an over-long list comprehension opens its bracket.
+        """
+        self.assertIn(
+            "        items=(\n"
+            "            [\n"
+            "                modelwithanextremelylonggeneratedpythonclassnameforwrapping_from_json"
+            "(item)\n"
+            '                for item in data["items"]\n'
+            "            ]\n"
+            "        ),\n",
+            self.files["models.py"],
+        )
+
+    def test_guarded_comprehension_splits(self) -> None:
+        """
+        Test that the comprehension also splits inside an if/else guard.
+        """
+        self.assertIn(
+            "        maybe=(\n"
+            "            [\n"
+            "                modelwithanextremelylonggeneratedpythonclassnameforwrapping_from_json"
+            "(item)\n"
+            '                for item in data["maybe"]\n'
+            "            ]\n"
+            '            if data.get("maybe") is not None\n'
+            "            else None\n"
+            "        ),\n",
+            self.files["models.py"],
+        )
+
+    def test_nested_comprehension_splits_recursively(self) -> None:
+        """
+        Test that a nested comprehension splits its inner level too.
+        """
+        self.assertIn(
+            "        matrix=(\n"
+            "            [\n"
+            "                [\n"
+            "                    modelwithanextremelylonggeneratedpythonclassnameforwrapping"
+            "_from_json(item1)\n"
+            "                    for item1 in item\n"
+            "                ]\n"
+            '                for item in data["matrix"]\n'
+            "            ]\n"
+            "        ),\n",
+            self.files["models.py"],
+        )
+
+    def test_dict_comprehension_splits(self) -> None:
+        """
+        Test that an over-long dict comprehension opens its brace.
+        """
+        self.assertIn(
+            "        labels=(\n"
+            "            {\n"
+            "                key: modelwithanextremelylonggeneratedpythonclassnameforwrapping"
+            "_from_json(value)\n"
+            '                for key, value in data["labels"].items()\n'
+            "            }\n"
+            "        ),\n",
+            self.files["models.py"],
+        )
+
+    def test_model_field_wraps(self) -> None:
+        """
+        Test the two model-field layouts: value parenthesized when the
+        head fits, annotation parenthesized when it does not.
+        """
+        self.assertIn(
+            "    optionalitemsone: "
+            "list[Modelwithanextremelylonggeneratedpythonclassnameforwrapping] | None = (\n"
+            "        None\n"
+            "    )\n",
+            self.files["models.py"],
+        )
+        self.assertIn(
+            "    optionalfieldwithalongername: (\n"
+            "        list[Modelwithanextremelylonggeneratedpythonclassnameforwrapping] | None\n"
+            "    ) = None\n",
+            self.files["models.py"],
+        )
+
+    def test_operation_class_header_wraps(self) -> None:
+        """
+        Test that an over-long operation base moves to its own line.
+        """
+        self.assertIn(
+            "class ListLongThings(\n"
+            "    JsonOperation[list[Modelwithanextremelylonggeneratedpythonclassnameforwrapping]]"
+            "\n):\n",
+            self.files["operations.py"],
+        )
+
+    def test_operation_field_wraps(self) -> None:
+        """
+        Test the three field layouts ruff format uses in turn: argument
+        one line deeper, whole call parenthesized, annotation
+        parenthesized.
+        """
+        operations = self.files["operations.py"]
+        self.assertIn(
+            "    secondparamname: Enumerationwithanextremelylonggeneratedpythonclassname"
+            " = query(\n"
+            "        default=Enumerationwithanextremelylonggeneratedpythonclassname.FIRST\n"
+            "    )\n",
+            operations,
+        )
+        self.assertIn(
+            "    thirdparameterlonger:"
+            " list[Enumerationwithanextremelylonggeneratedpythonclassname] | None = (\n"
+            "        query(default=None)\n"
+            "    )\n",
+            operations,
+        )
+        self.assertIn(
+            "    fourthparameterwithamuchlongername: (\n"
+            "        Enumerationwithanextremelylonggeneratedpythonclassname | None\n"
+            "    ) = query(default=None)\n",
+            operations,
+        )
+
+    def test_load_json_def_and_return_wrap(self) -> None:
+        """
+        Test that an over-long ``load_json`` puts its parameters on one
+        shared line and splits the returned comprehension.
+        """
+        operations = self.files["operations.py"]
+        self.assertIn(
+            "    def load_json(\n"
+            "        self, data: Any\n"
+            "    ) -> list[Modelwithanextremelylonggeneratedpythonclassnameforwrapping]:\n",
+            operations,
+        )
+        self.assertIn(
+            "        return [\n"
+            "            modelwithanextremelylonggeneratedpythonclassnameforwrapping"
+            "_from_json(item)\n"
+            "            for item in data\n"
+            "        ]\n",
+            operations,
+        )
+
+    def test_fieldless_operation_single_blank_line(self) -> None:
+        """
+        Test that an operation without fields keeps a single blank line
+        between its path and its load method.
+        """
+        self.assertIn(
+            '    path = "/plain"\n\n    def load(self, response: Response) -> bytes:\n',
+            self.files["operations.py"],
+        )
+
+    def test_over_long_alias_stays(self) -> None:
+        """
+        Test that an alias parentheses would not save stays on one line
+        (ruff format leaves it alone too).
+        """
+        self.assertIn(
+            'Longunion: TypeAlias = "Firstunionmemberwithanextremelylonggeneratedclassname |'
+            ' Secondunionmemberwithanextremelylonggeneratedclassname"\n',
+            self.files["models.py"],
+        )
+
+    def test_package_is_ruff_clean(self) -> None:
+        """
+        Test that the whole generated package satisfies ruff format and
+        ruff check under the repository configuration.
+        """
+        ruff = shutil.which("ruff")
+        assert ruff is not None, "ruff must be installed (it is a dev dependency)"
+        config = Path(__file__).parents[3] / "pyproject.toml"
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "longnames_client"
+            write_package(self.files, package)
+            for arguments in (["format", "--check"], ["check"]):
+                result = subprocess.run(
+                    [ruff, *arguments, "--config", str(config), str(package)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
