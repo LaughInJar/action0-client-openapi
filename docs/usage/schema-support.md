@@ -93,8 +93,14 @@ translation:
   nodes cannot be inlined and is an error; cycles through components
   are fine.
 
-`http(s)://` references are **not** downloaded — save the file next to
-the schema and reference it by a relative path.
+The schema itself may be an `http(s)://` URL, and references may point
+at URLs too — relative references in a downloaded document resolve
+against its URL, which also means a downloaded document can only ever
+reference further URLs, never files on your disk. You named the root
+URL, so it is fetched directly; referenced files you did *not* name
+download only with consent: the CLI asks `download <url>? [y/N]` per
+file (`--download` pre-approves all of them), the library API takes an
+`allow_download` callback.
 
 ## Security schemes
 
@@ -114,14 +120,12 @@ to pass those credentials yourself (default headers or an
 
 ## Not supported (yet)
 
-- `allOf` parts that are not object schemas, or that define the same
-  property differently — flatten those by hand before generating.
-  (Constraint-only keywords inside `allOf` parts, like `minProperties`,
-  are ignored.)
-- `http(s)://` `$ref`s — referenced schema files are read from disk
-  only, never downloaded.
-- Cookie parameters, content-typed parameters, request bodies other
-  than JSON and form-urlencoded (e.g. `multipart/form-data`).
+- `allOf` parts that are not object schemas — flatten those by hand
+  before generating. (Constraint-only keywords inside `allOf` parts,
+  like `minProperties`, are ignored.)
+- Cookie parameters, content-typed parameters, and *typed* multipart
+  bodies — `multipart/form-data` gets the raw-bytes treatment, so you
+  assemble the multipart payload yourself.
 - Per-status response typing beyond the picked 2xx (other 2xx responses
   still pass the check and are parsed with the same converter), and
   typed error payloads for 4xx/5xx.

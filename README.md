@@ -49,8 +49,10 @@ schemes become client constructor credentials — with the schema's
 `description`s carried along as docstrings and `#:` doc-comments. The [schema support
 matrix](https://laughinjar.github.io/action0-client-openapi/usage/schema-support.html)
 lists exactly which OpenAPI 3.0/3.1 constructs are covered — schemas
-split over several files are bundled automatically — and what is
-deliberately deferred (http(s) $refs, multipart bodies, ...).
+split over several files are bundled automatically, straight from a URL
+too (referenced files download after a per-file confirmation, or with
+`--download`) — and what is deliberately deferred (typed multipart
+bodies, per-status response typing, ...).
 
 Requires Python 3.11 or newer.
 

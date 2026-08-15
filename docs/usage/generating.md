@@ -32,6 +32,20 @@ loaded and bundled automatically — {doc}`schema-support` describes the
 merge rules. Existing files are never overwritten unless you pass
 `--force`.
 
+The schema can also be an http(s) URL. The URL you name is fetched
+directly, but files it *references* download only with your consent —
+one `[y/N]` prompt per file, or all of them with `--download`:
+
+```shell
+action0-openapi https://example.com/api/openapi.yaml -o src/ --download
+```
+
+```
+action0-openapi: downloading https://example.com/api/components/geo.yaml
+src/example_client/__init__.py
+...
+```
+
 For large APIs, `--split-by-tag` puts each OpenAPI tag's operations
 into a module of its own (`operations_pets.py`, `operations_auth.py`,
 ...; untagged operations stay in `operations.py`). The package root
