@@ -48,7 +48,10 @@ inline response object of `createToken` becomes `CreateTokenResponse`,
 an inline enum of a `status` property of `Pet` becomes `PetStatus`.
 Names are converted to PEP 8 (`petId` → `pet_id`, classes `PascalCase`,
 enum members `UPPER_SNAKE`); the original spelling is kept as the wire
-name. Python keywords and names reserved by
+name. Acronym runs count as one word, pluralized ones keep their `s`
+(`HTTPError` → `HttpError`, `numAPIs` → `num_apis`), and accented
+letters lose their accents instead of splitting the word (`PokéAPI` →
+`PokeApi`). Python keywords and names reserved by
 [action0-client](https://laughinjar.github.io/action0-client/)
 operations get a trailing underscore.
 

@@ -15,13 +15,15 @@ that would start with a digit get a ``V``/``v_`` prefix, and
 import keyword
 import re
 import string
+import unicodedata
 from collections.abc import Collection
 from collections.abc import Mapping
 
-#: splits a raw name into words: lowercase/digit runs, capitalized
-#: words, and acronym runs ("petId" -> pet, Id; "HTTPServer" -> HTTP,
-#: Server); everything non-alphanumeric separates
-_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z][a-z0-9]*|[a-z0-9]+")
+#: splits a raw name into words: pluralized acronyms ("APIs" -> APIs,
+#: two capitals at least so "Rs232" stays one word), acronym runs
+#: ("HTTPServer" -> HTTP, Server), capitalized words ("petId" -> pet,
+#: Id), and lowercase/digit runs; everything non-alphanumeric separates
+_WORDS = re.compile(r"[A-Z]{2,}s(?![a-z])|[A-Z]+(?![a-z])|[A-Z][a-z0-9]*|[a-z0-9]+")
 
 #: names an operation dataclass field must not use: the Operation
 #: ClassVars (reserved by action0-client) and the field specifiers the
@@ -49,10 +51,16 @@ def _words(raw: str) -> list[str]:
     """
     Split a raw name into its words.
 
+    Accented letters lose their accents first ("Poké" becomes "Poke")
+    instead of splitting the word; anything still non-ASCII after that
+    separates words, as all other punctuation does.
+
     :param raw: the name as spelled in the schema
     :return: the words, ``["x"]`` if nothing alphanumeric remains
     """
-    return _WORDS.findall(raw) or ["x"]
+    decomposed = unicodedata.normalize("NFKD", raw)
+    plain = "".join(char for char in decomposed if not unicodedata.combining(char))
+    return _WORDS.findall(plain) or ["x"]
 
 
 def class_name(raw: str) -> str:
@@ -65,6 +73,10 @@ def class_name(raw: str) -> str:
     'PetStatus'
     >>> class_name("HTTPValidationError")
     'HttpValidationError'
+    >>> class_name("APIs.guru")  # pluralized acronyms stay one word
+    'ApisGuru'
+    >>> class_name("PokéAPI")  # accents are dropped, not word breaks
+    'PokeApi'
     >>> class_name("1password")  # leading digit: prefixed
     'V1password'
 
@@ -85,6 +97,8 @@ def field_name(raw: str, *, reserved: Collection[str] = ()) -> str:
     'pet_id'
     >>> field_name("X-Request-Id")
     'x_request_id'
+    >>> field_name("numAPIs")  # pluralized acronyms stay one word
+    'num_apis'
     >>> field_name("class")  # Python keyword
     'class_'
     >>> field_name("path", reserved=RESERVED_OPERATION_FIELDS)
