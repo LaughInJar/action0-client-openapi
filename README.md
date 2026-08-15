@@ -73,6 +73,14 @@ uv run pyright         # type-check
 uv run ty check        # type-check
 ```
 
+## AI disclosure
+
+This library is developed with heavy use of AI coding tools: the code,
+tests, and documentation are largely written by
+[Claude Code](https://claude.com/claude-code), working from the author's
+design brief and reviewed by the author. If that changes how much you want
+to rely on this package, that's a fair call — read the source, it's small.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
