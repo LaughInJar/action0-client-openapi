@@ -85,6 +85,35 @@ _PARAM_LOCATIONS = {
     "header": ParamLocation.HEADER,
 }
 
+# schema keywords that a Swagger-2.0-style parameter carries directly on
+# the parameter object instead of under ``schema:``
+_BARE_SCHEMA_KEYWORDS = (
+    "type",
+    "format",
+    "enum",
+    "items",
+    "nullable",
+    "default",
+    "example",
+    "pattern",
+)
+
+
+def _bare_parameter_schema(parameter: Mapping[str, Any]) -> dict[str, Any] | None:
+    """
+    Salvage a schema from a parameter that spells its type Swagger-2.0
+    style: ``type``/``format``/... directly on the parameter object
+    instead of under ``schema:``.
+
+    :param parameter: the parameter node, known to lack a ``schema``
+    :return: the schema built from the parameter's own keywords, or
+        ``None`` when there is nothing to salvage (no ``type``/``enum``,
+        or the parameter is content-typed)
+    """
+    if "content" in parameter or not ("type" in parameter or "enum" in parameter):
+        return None
+    return {key: parameter[key] for key in _BARE_SCHEMA_KEYWORDS if key in parameter}
+
 
 def parse_api(document: Mapping[str, Any]) -> Api:
     """
@@ -914,9 +943,18 @@ class _Parser:
             location = _PARAM_LOCATIONS[location_name]
             schema = parameter.get("schema")
             if not isinstance(schema, Mapping):
-                raise SchemaError(
-                    f"{where}: parameter {wire_name!r} has no schema —"
-                    " content-typed parameters are not supported"
+                # tolerate broken specs (Meteomatics ships one): a
+                # Swagger-2.0-style parameter with its type keywords
+                # directly on the parameter object
+                schema = _bare_parameter_schema(parameter)
+                if schema is None:
+                    raise SchemaError(
+                        f"{where}: parameter {wire_name!r} has no schema —"
+                        " content-typed parameters are not supported"
+                    )
+                self._warnings.append(
+                    f"{where}: parameter {wire_name!r} declares its type directly on the"
+                    " parameter (Swagger 2.0 style) — treated as its schema"
                 )
             param_type, nullable = self._schema_type(
                 schema,
