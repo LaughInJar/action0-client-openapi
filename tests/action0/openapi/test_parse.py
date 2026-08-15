@@ -236,6 +236,9 @@ class PetstoreTestCase(unittest.TestCase):
         self.assertFalse(by_name["limit"].required)
         self.assertEqual(by_name["limit"].default, 20)
         self.assertEqual(by_name["tags"].type, ArrayType(ScalarType(Scalar.STR)))
+        # declared explode: false, so the items join into one pair
+        self.assertEqual(by_name["tags"].join_with, ",")
+        self.assertIsNone(by_name["limit"].join_with)
         self.assertEqual(by_name["x_request_id"].location, ParamLocation.HEADER)
         self.assertEqual(by_name["x_request_id"].wire_name, "X-Request-Id")
         self.assertEqual(by_name["x_request_id"].type, ScalarType(Scalar.UUID))
@@ -461,6 +464,119 @@ class ServerFallbackTestCase(unittest.TestCase):
         api = parse_api(minimal(paths={"/things": {"get": self.operation()}}))
         self.assertIsNone(api.base_url)
         self.assertEqual(api.warnings, ())
+
+
+class JoinedParameterTestCase(unittest.TestCase):
+    """
+    tests for the non-exploded (joined) array parameter styles
+    """
+
+    def parse_parameter(self, parameter: dict[str, Any]) -> Api:
+        """
+        Parse a document with one GET operation carrying one parameter.
+
+        :param parameter: the parameter node (name/in filled in)
+        :return: the parsed IR
+        """
+        return parse_api(
+            minimal(
+                paths={
+                    "/things": {
+                        "get": {
+                            "operationId": "listThings",
+                            "parameters": [{"name": "values", "in": "query", **parameter}],
+                            "responses": {"204": {"description": "ok"}},
+                        }
+                    }
+                }
+            )
+        )
+
+    def join_of(self, api: Api) -> "str | None":
+        """
+        The parsed parameter's join separator.
+
+        :param api: the parsed IR
+        :return: the separator
+        """
+        return api.operations[0].params[0].join_with
+
+    def test_styles_and_defaults(self) -> None:
+        """
+        Test the style table and the spec's explode defaults: only
+        ``form`` defaults to exploded.
+        """
+        array = {"type": "array", "items": {"type": "integer"}}
+        cases: list[tuple[dict[str, Any], str | None]] = [
+            ({"schema": array}, None),
+            ({"explode": False, "schema": array}, ","),
+            ({"style": "form", "explode": False, "schema": array}, ","),
+            ({"style": "spaceDelimited", "schema": array}, " "),
+            ({"style": "pipeDelimited", "schema": array}, "|"),
+            ({"style": "pipeDelimited", "explode": True, "schema": array}, None),
+        ]
+        for parameter, expected in cases:
+            with self.subTest(parameter=parameter):
+                self.assertEqual(self.join_of(self.parse_parameter(parameter)), expected)
+
+    def test_non_arrays_and_other_locations_never_join(self) -> None:
+        """
+        Test that scalars and header parameters ignore explode.
+        """
+        api = self.parse_parameter({"explode": False, "schema": {"type": "string"}})
+        self.assertIsNone(self.join_of(api))
+        api = parse_api(
+            minimal(
+                paths={
+                    "/things": {
+                        "get": {
+                            "operationId": "listThings",
+                            "parameters": [
+                                {
+                                    "name": "values",
+                                    "in": "header",
+                                    "explode": False,
+                                    "schema": {"type": "array", "items": {"type": "string"}},
+                                }
+                            ],
+                            "responses": {"204": {"description": "ok"}},
+                        }
+                    }
+                }
+            )
+        )
+        self.assertIsNone(self.join_of(api))
+
+    def test_unsupported_style_warns_and_explodes(self) -> None:
+        """
+        Test that deepObject falls back to exploded pairs, warning.
+        """
+        api = self.parse_parameter(
+            {
+                "style": "deepObject",
+                "explode": False,
+                "schema": {"type": "array", "items": {"type": "string"}},
+            }
+        )
+        self.assertIsNone(self.join_of(api))
+        self.assertTrue(any("unsupported style 'deepObject'" in w for w in api.warnings))
+
+    def test_unjoinable_items_warn_and_explode(self) -> None:
+        """
+        Test that items without a text form (objects) fall back to
+        exploded pairs, warning.
+        """
+        api = self.parse_parameter(
+            {
+                "explode": False,
+                "schema": {
+                    "type": "array",
+                    "items": {"type": "object", "properties": {"x": {"type": "integer"}}},
+                },
+            }
+        )
+        self.assertIsNone(self.join_of(api))
+        self.assertTrue(any("no joinable text form" in w for w in api.warnings))
 
 
 class EdgeCaseTestCase(unittest.TestCase):

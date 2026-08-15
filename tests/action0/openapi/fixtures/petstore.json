@@ -43,6 +43,7 @@
                     {
                         "name": "tags",
                         "in": "query",
+                        "explode": false,
                         "schema": {
                             "type": "array",
                             "items": {

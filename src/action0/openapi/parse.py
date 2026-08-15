@@ -85,6 +85,28 @@ _PARAM_LOCATIONS = {
     "header": ParamLocation.HEADER,
 }
 
+#: the separator joining a non-exploded array query parameter's items,
+#: per serialization style
+_ARRAY_SEPARATORS = {
+    "form": ",",
+    "spaceDelimited": " ",
+    "pipeDelimited": "|",
+}
+
+#: array item types whose joined text form is well-defined (everything
+#: else falls back to the exploded one-pair-per-item serialization)
+_JOINABLE_SCALARS = frozenset(
+    {
+        Scalar.STR,
+        Scalar.INT,
+        Scalar.FLOAT,
+        Scalar.BOOL,
+        Scalar.DATE,
+        Scalar.DATETIME,
+        Scalar.UUID,
+    }
+)
+
 # schema keywords that a Swagger-2.0-style parameter carries directly on
 # the parameter object instead of under ``schema:``
 _BARE_SCHEMA_KEYWORDS = (
@@ -1059,10 +1081,67 @@ class _Parser:
                     required=required,
                     nullable=nullable,
                     default=None if required else self._default_for(schema, param_type),
+                    join_with=self._join_separator(
+                        parameter, param_type, location, wire_name, where=where
+                    ),
                     description=parameter.get("description"),
                 )
             )
         return params, renames
+
+    def _join_separator(
+        self,
+        parameter: Mapping[str, Any],
+        param_type: TypeExpr,
+        location: ParamLocation,
+        wire_name: str,
+        *,
+        where: str,
+    ) -> str | None:
+        """
+        The separator of a non-exploded array query parameter, if any.
+
+        ``style: form`` (the query default) with ``explode: false``
+        joins the items with commas into one ``key=value`` pair;
+        ``spaceDelimited`` and ``pipeDelimited`` (non-exploded by
+        default) use their separator. Exploded parameters — the query
+        default — keep the one-pair-per-item serialization action0-client
+        performs on its own.
+
+        :param parameter: the parameter node
+        :param param_type: the parameter's translated type
+        :param location: where the parameter goes
+        :param wire_name: the parameter name, for warnings
+        :param where: the schema location, for error messages
+        :return: the separator, or ``None`` for exploded serialization
+        """
+        if location is not ParamLocation.QUERY or not isinstance(param_type, ArrayType):
+            return None
+        style = str(parameter.get("style", "form"))
+        explode = parameter.get("explode")
+        if explode is None:
+            # the spec defaults explode to true exactly for style form
+            explode = style == "form"
+        if explode:
+            return None
+        separator = _ARRAY_SEPARATORS.get(style)
+        if separator is None:
+            self._warnings.append(
+                f"{where}: parameter {wire_name!r} uses the unsupported style {style!r}"
+                " — sent as one key=value pair per item"
+            )
+            return None
+        item = param_type.item
+        joinable = (isinstance(item, ScalarType) and item.kind in _JOINABLE_SCALARS) or isinstance(
+            item, EnumType
+        )
+        if not joinable:
+            self._warnings.append(
+                f"{where}: parameter {wire_name!r} is declared non-exploded, but its items"
+                " have no joinable text form — sent as one key=value pair per item"
+            )
+            return None
+        return separator
 
     def _parse_body(
         self,

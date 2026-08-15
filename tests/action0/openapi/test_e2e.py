@@ -70,7 +70,8 @@ class EndToEndTestCase(unittest.TestCase):
         request = client.backend.requests[0]
         self.assertEqual(request.method, "GET")
         self.assertEqual(request.url.path, "/v1/pets")
-        self.assertEqual(request.url.query.get_all("tags"), ["dog", "good"])
+        # tags is declared explode: false — the items join into one pair
+        self.assertEqual(request.url.query.get_all("tags"), ["dog,good"])
         self.assertEqual(request.url.query.get("limit"), "5")
         # the client's prepare() adds the query credential
         self.assertEqual(request.url.query.get("api_key"), "k123")
