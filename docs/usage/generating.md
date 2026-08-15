@@ -9,6 +9,7 @@ action0-openapi petstore.json -o src/
 ```
 src/petstore_client/__init__.py
 src/petstore_client/client.py
+src/petstore_client/errors.py
 src/petstore_client/models.py
 src/petstore_client/operations.py
 src/petstore_client/py.typed

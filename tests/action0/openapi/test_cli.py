@@ -57,7 +57,7 @@ class CliTestCase(RunCliTestCase):
         package = self.output / "petstore_client"
         self.assertEqual(
             sorted(path.name for path in package.iterdir()),
-            ["__init__.py", "client.py", "models.py", "operations.py", "py.typed"],
+            ["__init__.py", "client.py", "errors.py", "models.py", "operations.py", "py.typed"],
         )
         self.assertIn(str(package / "models.py"), stdout)
         self.assertIn("warning: components.securitySchemes.LegacyOAuth", stderr)

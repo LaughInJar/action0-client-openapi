@@ -2,11 +2,15 @@
 """Typed API client for Petstore 1.0.0."""
 
 from .client import PetstoreClient
+from .errors import BadRequestError
+from .errors import DefaultError
+from .errors import NotFoundError
 from .models import Animal
 from .models import Cat
 from .models import Companion
 from .models import CreateTokenResponse
 from .models import Dog
+from .models import Error
 from .models import HealthRecord
 from .models import Owner
 from .models import Pet
@@ -23,18 +27,22 @@ from .operations import UploadPetPhoto
 
 __all__ = [
     "Animal",
+    "BadRequestError",
     "Cat",
     "Companion",
     "CreatePet",
     "CreateToken",
     "CreateTokenResponse",
+    "DefaultError",
     "DeletePet",
     "Dog",
+    "Error",
     "GetInventory",
     "GetPet",
     "GetPetPhoto",
     "HealthRecord",
     "ListPets",
+    "NotFoundError",
     "Owner",
     "Pet",
     "PetStatus",

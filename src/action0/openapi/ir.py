@@ -285,6 +285,27 @@ class Body:
     media_type: str | None = None
 
 
+@dataclass(frozen=True)
+class ErrorCase:
+    """
+    One documented non-2xx response, raised as a typed exception.
+
+    :param status: the response key — a concrete status (``"400"``), a
+        range (``"4XX"``/``"5XX"``) or ``"default"``
+    :param exception: the generated exception class name; operations
+        documenting the same status with the same model share it
+    :param model: the class name of the model the error payload parses
+        into
+    :param description: the response's description, for the ``check``
+        docstring
+    """
+
+    status: str
+    exception: str
+    model: str
+    description: str | None = None
+
+
 class ResponseKind(enum.Enum):
     """What an operation's success response parses into."""
 
@@ -311,6 +332,9 @@ class OperationIR:
     :param response_kind: what the success response parses into
     :param response_type: the parsed type (for
         :py:attr:`ResponseKind.MODEL`; ``None`` otherwise)
+    :param errors: the documented non-2xx responses raised as typed
+        exceptions (concrete statuses first, then ranges, then
+        ``default`` — the order the generated ``check`` tests them in)
     :param summary: the schema's summary, for the docstring
     :param description: the schema's description, for the docstring
     :param tag: the operation's first ``tags`` entry, if any — the
@@ -326,6 +350,7 @@ class OperationIR:
     body: Body | None = None
     response_kind: ResponseKind = ResponseKind.NONE
     response_type: TypeExpr | None = None
+    errors: tuple[ErrorCase, ...] = ()
     summary: str | None = None
     description: str | None = None
     tag: str | None = None

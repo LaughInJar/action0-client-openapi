@@ -2,8 +2,9 @@
 Assembling and writing one generated client package.
 
 :py:func:`generate_package` renders the whole package —
-``__init__.py``, ``models.py``, ``operations.py``, ``client.py`` and
-the ``py.typed`` marker — as a mapping of file names to file contents;
+``__init__.py``, ``models.py``, ``operations.py``, ``client.py``,
+``errors.py`` (when the schema documents error responses) and the
+``py.typed`` marker — as a mapping of file names to file contents;
 :py:func:`write_package` puts it on disk. The default package and
 client class names are derived from the schema's ``info.title`` by
 :py:func:`default_package_name` and :py:func:`default_client_name`.
@@ -18,6 +19,7 @@ from .ir import OperationIR
 from .names import class_name
 from .names import field_name
 from .render import render_client
+from .render import render_errors
 from .render import render_init
 from .render import render_models
 from .render import render_operations
@@ -79,6 +81,8 @@ def generate_package(
         "client.py": render_client(api, header, client_name),
         "py.typed": "",
     }
+    if any(operation.errors for operation in api.operations):
+        files["errors.py"] = render_errors(api, header)
     for module, operations in groups:
         files[f"{module}.py"] = render_operations(api, header, operations)
     return files

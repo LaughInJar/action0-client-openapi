@@ -83,12 +83,21 @@ operations get a trailing underscore.
 | lowest documented 2xx response with JSON content | the operation's typed result (a result needing no conversion is returned through `typing.cast` so mypy strict accepts the generated `load_json`) |
 | `204` (or 2xx without content) | `Operation[None]` |
 | 2xx with only non-JSON content | `Operation[bytes]` |
+| documented 4xx/5xx (or `4XX`/`5XX`/`default`) response with a JSON object schema | an error model plus a generated `APIError` subclass in `errors.py`, named after the status (`400` → `BadRequestError`) and carrying the parsed payload as `.error`; the operation's generated `check` raises it. Non-JSON or non-object error responses stay with the plain `APIError` |
 | operation `summary` / `description` | the operation class docstring |
 | `description` on a parameter or body property | a `#:` doc-comment above the field |
 
 Operation classes are named after the `operationId` (`listPets` →
 `ListPets`), falling back to method + path (`GET /pets/{petId}` →
 `GetPetsPetId`).
+
+Operations documenting the same status with the same error model share
+one exception class; the same status with a *different* model gets a
+numbered name (`BadRequestError2`). An error body that turns out not to
+be a JSON object at runtime falls back to the plain `APIError`, so the
+generated `check` never masks an unparseable failure. Every generated
+exception subclasses `action0.client.APIError` — existing
+`except APIError:` handlers keep working.
 
 ## Multi-file documents
 
@@ -144,6 +153,5 @@ to pass those credentials yourself (default headers or an
   bodies — `multipart/form-data` gets the raw-bytes treatment, so you
   assemble the multipart payload yourself.
 - Per-status response typing beyond the picked 2xx (other 2xx responses
-  still pass the check and are parsed with the same converter), and
-  typed error payloads for 4xx/5xx.
+  still pass the check and are parsed with the same converter).
 - Swagger 2.0 documents, `callbacks`, `links` and `webhooks`.
