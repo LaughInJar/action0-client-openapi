@@ -81,13 +81,32 @@ class ReferencedFilesTestCase(unittest.TestCase):
         }
         self.assertEqual(referenced_files(document, base=ROOT), ["/specs/x.json"])
 
-    def test_http_reference_rejected(self) -> None:
+    def test_http_reference_is_listed_as_url(self) -> None:
         """
-        Test the error for http(s) references (no downloads).
+        Test that an absolute http(s) reference becomes a URL key.
         """
         document = {"a": {"$ref": "https://example.com/geo.yaml#/components/schemas/P"}}
-        with self.assertRaisesRegex(SchemaError, "not downloaded"):
-            referenced_files(document, base=ROOT)
+        self.assertEqual(referenced_files(document, base=ROOT), ["https://example.com/geo.yaml"])
+
+    def test_url_base_resolves_relative_references(self) -> None:
+        """
+        Test that references in a downloaded document resolve against
+        its URL — including absolute paths, which stay on the host, so
+        a downloaded document can never reach local files.
+        """
+        document = {
+            "a": {"$ref": "./geo.yaml#/components/schemas/P"},
+            "b": {"$ref": "../shared.yaml"},
+            "c": {"$ref": "/etc/passwd"},
+        }
+        self.assertEqual(
+            referenced_files(document, base="https://example.com/api/v1/root.yaml"),
+            [
+                "https://example.com/api/v1/geo.yaml",
+                "https://example.com/api/shared.yaml",
+                "https://example.com/etc/passwd",
+            ],
+        )
 
     def test_unknown_scheme_rejected(self) -> None:
         """
@@ -357,6 +376,27 @@ class BundleDocumentsTestCase(unittest.TestCase):
         parts = {"x": {"type": "object"}}
         with self.assertRaisesRegex(SchemaError, "only components can be mapped"):
             bundle_documents(documents(root, parts=parts))
+
+    def test_url_keyed_documents_bundle(self) -> None:
+        """
+        Test that a document set loaded from URLs bundles like one
+        loaded from disk.
+        """
+        loaded = Documents(
+            root="https://example.com/api/root.json",
+            files={
+                "https://example.com/api/root.json": {
+                    "a": {"$ref": "./parts.json#/components/schemas/Pet"}
+                },
+                "https://example.com/api/parts.json": {
+                    "components": {"schemas": {"Pet": {"type": "object"}}}
+                },
+            },
+        )
+        document, warnings = bundle_documents(loaded)
+        self.assertEqual(document["a"], {"$ref": "#/components/schemas/Pet"})
+        self.assertEqual(document["components"]["schemas"]["Pet"], {"type": "object"})
+        self.assertEqual(warnings, [])
 
     def test_escaped_pointer_segments(self) -> None:
         """

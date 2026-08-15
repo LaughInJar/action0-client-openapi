@@ -17,6 +17,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 from typing import Any
+from urllib.parse import urljoin
 from urllib.parse import urlsplit
 
 from .errors import SchemaError
@@ -65,8 +66,9 @@ def bundle_documents(documents: "Documents") -> tuple[dict[str, Any], list[str]]
     :param documents: the loaded document set
     :return: the merged document and the bundling warnings (component
         renames)
-    :raises SchemaError: on http(s) references, broken pointers, or
-        circular references that cannot be represented locally
+    :raises SchemaError: on broken pointers, references to files
+        missing from the set, or circular references that cannot be
+        represented locally
     """
     root = documents.files[documents.root]
     sites = _ref_sites(root)
@@ -90,10 +92,11 @@ def referenced_files(document: Mapping[str, Any], *, base: str) -> list[str]:
     ['/specs/components/geo.yaml']
 
     :param document: the decoded document
-    :param base: the canonical path of the file holding the document
-    :return: the referenced files, in document order, without
-        duplicates and without ``base`` itself
-    :raises SchemaError: on http(s) or otherwise non-file references
+    :param base: the canonical path or URL of the file holding the
+        document
+    :return: the referenced files (paths or URLs), in document order,
+        without duplicates and without ``base`` itself
+    :raises SchemaError: on references with an unsupported scheme
     """
     found: list[str] = []
     for container, key, _ in _ref_sites(document):
@@ -136,32 +139,48 @@ def _ref_sites(node: Any) -> list[_RefSite]:
     return sites
 
 
+def is_url(source: str) -> bool:
+    """
+    Say whether a document source is an http(s) URL.
+
+    >>> is_url("https://example.com/api.yaml"), is_url("./api.yaml")
+    (True, False)
+
+    :param source: a schema path or URL
+    :return: whether it is an http(s) URL
+    """
+    return source.startswith(("http://", "https://"))
+
+
 def _split_ref(reference: str, *, base: str) -> tuple[str, str]:
     """
     Canonicalize a reference against the file containing it.
 
+    Relative paths resolve against the containing file — a plain join
+    for local files, :py:func:`~urllib.parse.urljoin` when the file
+    came from a URL. The latter can only ever produce URLs again, so a
+    downloaded document has no way to reference local files.
+
     :param reference: the reference string
-    :param base: the canonical path of the containing file
-    :return: the canonical path of the referenced file and the JSON
-        pointer into it (empty for a whole-file reference)
-    :raises SchemaError: for references that are not a local pointer or
-        a file path
+    :param base: the canonical path or URL of the containing file
+    :return: the canonical path or URL of the referenced file and the
+        JSON pointer into it (empty for a whole-file reference)
+    :raises SchemaError: for references that are neither a local
+        pointer, a file path, nor an http(s) URL
     """
     if reference.startswith("#"):
         return base, reference[1:]
+    path, _, pointer = reference.partition("#")
     scheme = urlsplit(reference).scheme
     if scheme in ("http", "https"):
-        raise SchemaError(
-            f"unsupported reference {reference!r} — referenced schemas are not"
-            " downloaded; save the file next to the schema and reference it by"
-            " a relative path"
-        )
+        return path, pointer
     if len(scheme) > 1:  # a single letter would be a Windows drive, not a scheme
         raise SchemaError(
-            f'unsupported reference {reference!r} — only local "#/..." pointers'
-            " and file paths relative to the referencing document are supported"
+            f'unsupported reference {reference!r} — only local "#/..." pointers,'
+            " relative file paths and http(s) URLs are supported"
         )
-    path, _, pointer = reference.partition("#")
+    if is_url(base):
+        return urljoin(base, path), pointer
     return str((Path(base).parent / path).resolve()), pointer
 
 

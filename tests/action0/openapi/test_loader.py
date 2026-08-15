@@ -1,6 +1,8 @@
+import http.server
 import json
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from typing import Any
@@ -12,6 +14,9 @@ from action0.openapi import load_schema
 
 #: a minimal valid OpenAPI document
 MINIMAL = {"openapi": "3.1.0", "info": {"title": "t", "version": "1"}, "paths": {}}
+
+#: the checked-in multi-file schema, also served over HTTP below
+MULTIFILE_DIR = Path(__file__).parent / "fixtures" / "multifile"
 
 
 class SchemaDirTestCase(unittest.TestCase):
@@ -241,14 +246,115 @@ class LoadDocumentsTestCase(SchemaDirTestCase):
         with self.assertRaisesRegex(SchemaError, r"list\.json.*must be a JSON/YAML object"):
             load_documents(self.write_json("api.json", root))
 
-    def test_http_reference_rejected(self) -> None:
+    def test_referenced_url_needs_a_callback(self) -> None:
         """
-        Test that http(s) references stop the load with the download
-        message.
+        Test that a referenced URL is an error without allow_download.
         """
         root = dict(MINIMAL)
         root["components"] = {
             "schemas": {"X": {"$ref": "https://example.com/x.yaml#/components/schemas/X"}}
         }
-        with self.assertRaisesRegex(SchemaError, "not downloaded"):
+        with self.assertRaisesRegex(SchemaError, "pass allow_download"):
             load_documents(self.write_json("api.json", root))
+
+    def test_declined_download(self) -> None:
+        """
+        Test that a refusing callback stops the load, naming the URL.
+        """
+        root = dict(MINIMAL)
+        root["components"] = {
+            "schemas": {"X": {"$ref": "https://example.com/x.yaml#/components/schemas/X"}}
+        }
+        path = self.write_json("api.json", root)
+        with self.assertRaisesRegex(SchemaError, "example.com/x.yaml declined"):
+            load_documents(path, allow_download=lambda url: False)
+
+
+class _QuietHandler(http.server.SimpleHTTPRequestHandler):
+    """
+    A fixture-serving request handler that does not log to stderr.
+    """
+
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+        """
+        Drop the request log line.
+
+        :param format: the log format string
+        :param args: the log arguments
+        """
+
+
+class LoadDocumentsHttpTestCase(unittest.TestCase):
+    """
+    tests for :py:func:`action0.openapi.loader.load_documents` with
+    http(s) sources, against a local server serving the multifile
+    fixture
+    """
+
+    server: http.server.ThreadingHTTPServer
+    base: str
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        def handler(*args: Any, **kwargs: Any) -> _QuietHandler:
+            return _QuietHandler(*args, directory=str(MULTIFILE_DIR), **kwargs)
+
+        cls.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        # cleanups run last-in-first-out: stop serving, then close
+        cls.addClassCleanup(cls.server.server_close)
+        cls.addClassCleanup(cls.server.shutdown)
+        cls.base = f"http://127.0.0.1:{cls.server.server_address[1]}"
+
+    def test_url_root_downloads_referenced_files(self) -> None:
+        """
+        Test a URL schema: the root needs no consent, every referenced
+        file asks, and all keys are URLs.
+        """
+        asked: list[str] = []
+
+        def allow(url: str) -> bool:
+            asked.append(url)
+            return True
+
+        loaded = load_documents(f"{self.base}/zoo.yaml", allow_download=allow)
+        self.assertEqual(loaded.root, f"{self.base}/zoo.yaml")
+        self.assertEqual(
+            sorted(loaded.files),
+            [
+                f"{self.base}/components/animals.yaml",
+                f"{self.base}/components/point.yaml",
+                f"{self.base}/components/shared.yaml",
+                f"{self.base}/zoo.yaml",
+            ],
+        )
+        self.assertEqual(sorted(asked), sorted(set(loaded.files) - {loaded.root}))
+        animals = loaded.files[f"{self.base}/components/animals.yaml"]
+        self.assertIn("Animal", animals["components"]["schemas"])
+
+    def test_local_schema_referencing_a_url(self) -> None:
+        """
+        Test a local file with an absolute http reference: the set
+        mixes path and URL keys.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = dict(MINIMAL)
+            root["components"] = {
+                "schemas": {
+                    "Id": {"$ref": (f"{self.base}/components/shared.yaml#/components/schemas/Id")}
+                }
+            }
+            path = Path(tmp) / "api.json"
+            path.write_text(json.dumps(root), encoding="utf-8")
+            loaded = load_documents(path, allow_download=lambda url: True)
+        self.assertCountEqual(
+            loaded.files,
+            [f"{self.base}/components/shared.yaml", str(path.resolve())],
+        )
+
+    def test_download_failure(self) -> None:
+        """
+        Test that a 404 becomes a SchemaError naming the URL.
+        """
+        with self.assertRaisesRegex(SchemaError, "gone.yaml: cannot download"):
+            load_documents(f"{self.base}/gone.yaml")
