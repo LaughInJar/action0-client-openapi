@@ -358,8 +358,14 @@ class _Parser:
             return ScalarType(Scalar.ANY), nullable
         try:
             return scalar_type(type_name, node.get("format")), nullable
-        except ValueError as error:
-            raise SchemaError(f"{where}: {error}") from error
+        except ValueError:
+            # tolerate broken specs (PokéAPI ships ``type: ""``): treat
+            # an unrecognized type as untyped instead of refusing the
+            # whole document
+            self._warnings.append(
+                f"{where}: unknown schema type {type_name!r} — generated as an untyped value"
+            )
+            return ScalarType(Scalar.ANY), nullable
 
     def _union_type(
         self,

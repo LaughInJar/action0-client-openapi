@@ -346,6 +346,38 @@ class EdgeCaseTestCase(unittest.TestCase):
         assert isinstance(model, Model)
         self.assertEqual([field.name for field in model.fields], ["properties", "geometry"])
 
+    def test_unknown_type_degrades_to_any(self) -> None:
+        """
+        Test that an unrecognized ``type`` (PokéAPI ships ``type: ""``)
+        degrades to an untyped value with a warning instead of refusing
+        the document.
+        """
+        api = self.parse_component(
+            "Box",
+            {
+                "type": "object",
+                "properties": {
+                    "label": {"type": "", "nullable": True},
+                    "tag": {"type": "file"},
+                },
+            },
+        )
+        model = api.models[0]
+        assert isinstance(model, Model)
+        by_name = {field.name: field for field in model.fields}
+        self.assertEqual(by_name["label"].type, ScalarType(Scalar.ANY))
+        self.assertTrue(by_name["label"].nullable)
+        self.assertEqual(by_name["tag"].type, ScalarType(Scalar.ANY))
+        self.assertEqual(
+            [warning for warning in api.warnings if "unknown schema type" in warning],
+            [
+                "components.schemas.Box.properties.label: unknown schema type ''"
+                " — generated as an untyped value",
+                "components.schemas.Box.properties.tag: unknown schema type 'file'"
+                " — generated as an untyped value",
+            ],
+        )
+
     def test_31_nullable_type_array(self) -> None:
         """
         Test the 3.1 spelling: type: [T, "null"].

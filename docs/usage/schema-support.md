@@ -19,6 +19,7 @@ schema location; lesser omissions are reported as warnings.
 | object with `properties` | a generated dataclass model |
 | object with only `additionalProperties: <schema>` | `dict[str, ...]` |
 | object without properties, or an empty schema | `dict[str, Any]` / `Any` |
+| unrecognized `type` (e.g. `""` in broken generated specs) | `Any`, with a warning |
 | 3.0 `nullable: true`, 3.1 `type: [T, "null"]`, `oneOf`/`anyOf` of one type and `null` | `... \| None` |
 | `oneOf` / `anyOf` of several types | a generated union: a type alias (`Companion: TypeAlias = "Cat \| Dog"`) plus a dispatching converter |
 | `discriminator` (with or without `mapping`) | tag dispatch in the union's converter; members without a mapping entry use their component name, the spec's implicit convention |
