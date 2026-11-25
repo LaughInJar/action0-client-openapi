@@ -1444,7 +1444,8 @@ class EdgeCaseTestCase(unittest.TestCase):
 
     def test_reserved_operation_field_names(self) -> None:
         """
-        Test that parameters shadowing specifiers/ClassVars are escaped.
+        Test that parameters shadowing specifiers, ClassVars or methods
+        of the operation classes are escaped.
         """
         document = self.operation_document(
             {
@@ -1452,13 +1453,19 @@ class EdgeCaseTestCase(unittest.TestCase):
                 "parameters": [
                     {"name": "method", "in": "query", "schema": {"type": "string"}},
                     {"name": "query", "in": "query", "schema": {"type": "string"}},
+                    {"name": "check", "in": "query", "schema": {"type": "boolean"}},
+                    {"name": "load", "in": "header", "schema": {"type": "string"}},
                 ],
                 "responses": {},
             }
         )
         operation = parse_api(document).operations[0]
-        self.assertEqual([param.name for param in operation.params], ["method_", "query_"])
-        self.assertEqual([param.wire_name for param in operation.params], ["method", "query"])
+        self.assertEqual(
+            [param.name for param in operation.params], ["method_", "query_", "check_", "load_"]
+        )
+        self.assertEqual(
+            [param.wire_name for param in operation.params], ["method", "query", "check", "load"]
+        )
 
     def test_lowest_success_status_wins(self) -> None:
         """
