@@ -27,17 +27,36 @@ from collections.abc import Mapping
 #: non-alphanumeric separates
 _WORDS = re.compile(r"[A-Z]{2,}s(?![a-z])|[A-Z]+[0-9]*(?![a-z])|[A-Z][a-z0-9]*|[a-z0-9]+")
 
-#: names an operation dataclass field must not use: the Operation
-#: ClassVars (reserved by action0-client) and the field specifiers the
-#: generated operations module imports at module level (a field binding
-#: one of these in the class body would shadow the specifier for every
-#: later field of the same class)
+#: names an operation dataclass field must not use:
+#:
+#: - everything public that action0-client's ``Operation`` and
+#:   ``JsonOperation`` define themselves — their class attributes and
+#:   their methods. A field of such a name would replace the attribute or
+#:   the method: with ``check: bool`` the operation's ``check(response)``
+#:   becomes a call of a bool. action0-client refuses such classes when
+#:   they are defined (``action0.client.reserved_field_names()`` is its
+#:   list; a test holds this one to it).
+#: - the field specifiers the generated operations module imports at
+#:   module level (a field binding one of these in the class body would
+#:   shadow the specifier for every later field of the same class)
+#:
+#: The list is spelled out rather than taken from the installed
+#: action0-client, so that the generated code does not depend on which
+#: version of it the generator happens to run with.
 RESERVED_OPERATION_FIELDS = frozenset(
     {
         "method",
         "path",
         "accept",
         "default_location",
+        "request_options",
+        "as_request",
+        "parse",
+        "check",
+        "load",
+        "load_json",
+        "serialize_value",
+        "serialize_json_value",
         "query",
         "header",
         "path_param",

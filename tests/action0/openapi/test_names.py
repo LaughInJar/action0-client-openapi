@@ -120,6 +120,41 @@ class FieldNameTestCase(unittest.TestCase):
         self.assertEqual(field_name("method", reserved=RESERVED_OPERATION_FIELDS), "method_")
         self.assertEqual(field_name("body", reserved=frozenset({"body", "body_"})), "body__")
 
+    def test_operation_methods_are_reserved(self) -> None:
+        """
+        Test that the names of the methods (and of every class
+        attribute) of action0-client's operation classes are escaped: a
+        field called ``check`` would replace ``Operation.check``.
+        """
+        for name in (
+            "request_options",
+            "as_request",
+            "parse",
+            "check",
+            "load",
+            "load_json",
+            "serialize_value",
+            "serialize_json_value",
+        ):
+            with self.subTest(name=name):
+                self.assertEqual(field_name(name, reserved=RESERVED_OPERATION_FIELDS), f"{name}_")
+        # the spelling of the schema does not matter, the field name does
+        self.assertEqual(field_name("loadJSON", reserved=RESERVED_OPERATION_FIELDS), "load_json_")
+
+    def test_covers_everything_action0_client_reserves(self) -> None:
+        """
+        Test that the list has not fallen behind action0-client: every
+        name its operation classes refuse as a field name is escaped
+        here. (action0-client publishes its list since 0.2.0; with an
+        older one installed there is nothing to compare with.)
+        """
+        import action0.client
+
+        reserved_by_client = getattr(action0.client, "reserved_field_names", None)
+        if reserved_by_client is None:
+            self.skipTest("the installed action0-client does not publish its reserved names")
+        self.assertEqual(reserved_by_client() - RESERVED_OPERATION_FIELDS, frozenset())
+
     def test_specifiers_are_reserved_for_operations(self) -> None:
         """
         Test that the field specifier names count as reserved (a field

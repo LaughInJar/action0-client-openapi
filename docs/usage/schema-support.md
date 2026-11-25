@@ -66,6 +66,23 @@ accented letters lose their accents instead of splitting the word
 [action0-client](https://laughinjar.github.io/action0-client/)
 operations get a trailing underscore.
 
+Reserved for operations are the names its operation classes use
+themselves: the class attributes (`method`, `path`, `accept`,
+`default_location`, `request_options`), the methods (`as_request`,
+`parse`, `check`, `load`, `load_json`, `serialize_value`,
+`serialize_json_value`) and the field specifiers (`query`, `header`,
+...). A parameter called `check` therefore becomes the field `check_` —
+and is still sent as `check`, because the wire name is kept apart from
+the field name:
+
+```python
+class Verify(JsonOperation[dict[str, Any]]):
+    method = Method.GET
+    path = "/verify"
+
+    check_: bool = query("check")
+```
+
 ## Operations
 
 | Schema | Generated Python |

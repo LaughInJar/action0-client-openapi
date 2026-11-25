@@ -288,3 +288,70 @@ class RenderClientVariantsTestCase(unittest.TestCase):
         exec(compile(render_client(api, "h", "TClient"), "client.py", "exec"), namespace)
         client = namespace["TClient"](StubBackend(), "secret", "k123")
         self.assertEqual(client.headers.get("Authorization"), "Bearer secret")
+
+
+class ReservedParameterNamesTestCase(unittest.TestCase):
+    """
+    tests for generating from an API whose parameters are named like the
+    attributes and methods of action0-client's operation classes
+    """
+
+    NAMES = ("check", "load", "parse", "as_request", "request_options", "path", "method", "query")
+
+    def generated_operations(self) -> "dict[str, Any]":
+        """
+        Generate a package for an endpoint taking every one of
+        :py:attr:`NAMES` as a query parameter, and execute its
+        operations module.
+
+        :return: the namespace of the executed module
+        """
+        document = {
+            "openapi": "3.0.3",
+            "info": {"title": "Verify", "version": "1"},
+            "paths": {
+                "/verify": {
+                    "get": {
+                        "operationId": "verify",
+                        "parameters": [
+                            {"name": name, "in": "query", "schema": {"type": "string"}}
+                            for name in self.NAMES
+                        ],
+                        "responses": {
+                            "200": {
+                                "description": "ok",
+                                "content": {"application/json": {"schema": {"type": "object"}}},
+                            }
+                        },
+                    }
+                }
+            },
+        }
+        files = generate_package(parse_api(document), client_name="C", schema_name="verify.json")
+        namespace: dict[str, Any] = {}
+        exec(compile(files["operations.py"], "operations.py", "exec"), namespace)
+        return namespace
+
+    def test_generated_operation_defines_and_sends(self) -> None:
+        """
+        Test that the generated class can be defined at all — action0-client
+        refuses fields named like its own attributes and methods — and
+        that a request carries every parameter under the name the API
+        expects, parsed by the operation's intact ``parse``.
+        """
+        from action0.client import APIClient
+        from action0.client.testing import StubBackend
+        from action0.req import Response
+
+        verify = self.generated_operations()["Verify"]
+        operation = verify(**{f"{name}_": f"value of {name}" for name in self.NAMES})
+
+        backend = StubBackend(Response(200, body='{"ok": true}'))
+        result = APIClient(backend, "https://api.example.com").send(operation)
+
+        self.assertEqual(result, {"ok": True})
+        sent = backend.requests[0].url.query
+        self.assertEqual(
+            {name: sent[name] for name in self.NAMES},
+            {name: f"value of {name}" for name in self.NAMES},
+        )
